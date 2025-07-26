@@ -36,12 +36,46 @@ logger = logging.getLogger("sheets-mcp-server")
 # Google Sheets API scopes
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 
-# Configuration
-CREDENTIALS_FILE = os.environ.get('GOOGLE_CREDENTIALS_FILE', 'credentials.json')
-TOKEN_FILE = os.environ.get('GOOGLE_TOKEN_FILE', 'token.json')
-SPREADSHEET_ID = os.environ.get('GOOGLE_SPREADSHEET_ID')
-SHEET_NAME = os.environ.get('GOOGLE_SHEET_NAME', 'Sheet1')
-DATA_RANGE = os.environ.get('GOOGLE_DATA_RANGE', 'A:Z')  # Default to columns A-Z
+# Configuration - No environment variables needed!
+# Use absolute paths to ensure files are found regardless of working directory
+import os
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+CREDENTIALS_FILE = os.path.join(_script_dir, 'credentials.json')
+TOKEN_FILE = os.path.join(_script_dir, 'token.json')
+
+# Cache for multiple sheets
+sheets_cache = {}
+current_sheet_info = None
+
+def extract_spreadsheet_id(url_or_id):
+    """Extract spreadsheet ID from Google Sheets URL or return ID if already an ID"""
+    import re
+    
+    # If it's already just an ID (no slashes or dots), return as is
+    if '/' not in url_or_id and '.' not in url_or_id:
+        return url_or_id
+    
+    # Extract from various Google Sheets URL formats
+    patterns = [
+        r'/spreadsheets/d/([a-zA-Z0-9-_]+)',
+        r'[?&]id=([a-zA-Z0-9-_]+)',
+        r'^([a-zA-Z0-9-_]+)$'  # Just the ID itself
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url_or_id)
+        if match:
+            return match.group(1)
+    
+    raise ValueError(f"Could not extract spreadsheet ID from: {url_or_id}")
+
+def get_cached_sheet_data(spreadsheet_id):
+    """Get cached sheet data if available"""
+    return sheets_cache.get(spreadsheet_id)
+
+def cache_sheet_data(spreadsheet_id, data):
+    """Cache sheet data for quick access"""
+    sheets_cache[spreadsheet_id] = data
 
 class GoogleSheetsService:
     """Service for interacting with Google Sheets API"""
@@ -61,16 +95,18 @@ class GoogleSheetsService:
         # If no valid credentials, get new ones
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                if not os.path.exists(CREDENTIALS_FILE):
-                    logger.error(f"Google credentials file not found: {CREDENTIALS_FILE}")
+                try:
+                    creds.refresh(Request())
+                except Exception as e:
+                    logger.error(f"Token refresh failed: {e}")
+                    logger.error("Please run 'python oauth_setup.py' to re-authenticate")
                     return False
-                
-                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-                creds = flow.run_local_server(port=0)
+            else:
+                logger.error("No valid OAuth token found")
+                logger.error("Please run 'python oauth_setup.py' to authenticate")
+                return False
             
-            # Save credentials for next run
+            # Save refreshed credentials
             with open(TOKEN_FILE, 'w') as token:
                 token.write(creds.to_json())
         
@@ -124,8 +160,20 @@ def get_db_connection():
     db_path = os.path.join(os.path.dirname(__file__), "sheets_data.sqlite")
     return sqlite3.connect(db_path)
 
-def sync_sheets_to_sqlite(spreadsheet_id: str, sheet_name: str, data_range: str) -> Dict[str, Any]:
+def sync_sheets_to_sqlite(url_or_id: str, sheet_name: str = 'Sheet1', data_range: str = 'A:Z') -> Dict[str, Any]:
     """Sync data from Google Sheets to SQLite database"""
+    try:
+        # Extract spreadsheet ID from URL
+        spreadsheet_id = extract_spreadsheet_id(url_or_id)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    
+    # Check cache first
+    cached_data = get_cached_sheet_data(spreadsheet_id)
+    if cached_data:
+        logger.info(f"Using cached data for spreadsheet {spreadsheet_id}")
+        return {"success": True, "cached": True, **cached_data}
+    
     sheets_service = GoogleSheetsService()
     
     if not sheets_service.authenticate():
@@ -209,12 +257,24 @@ def sync_sheets_to_sqlite(spreadsheet_id: str, sheet_name: str, data_range: str)
         conn.commit()
         conn.close()
         
-        return {
+        result = {
             "success": True, 
             "rows_synced": len(rows),
             "columns": clean_headers,
-            "title": metadata.get('title', 'Unknown') if metadata else 'Unknown'
+            "title": metadata.get('title', 'Unknown') if metadata else 'Unknown',
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_name": sheet_name,
+            "url": metadata.get('url', '') if metadata else ''
         }
+        
+        # Cache the result
+        cache_sheet_data(spreadsheet_id, result)
+        
+        # Set as current sheet
+        global current_sheet_info
+        current_sheet_info = result
+        
+        return result
         
     except Exception as e:
         conn.rollback()
@@ -272,11 +332,12 @@ async def handle_read_resource(uri: AnyUrl) -> str:
     if uri_str == "sheets://sync/required":
         return json.dumps({
             "message": "No synced data available",
-            "instructions": "Use the sync_sheets tool to sync your Google Sheets data first",
-            "required_env_vars": [
-                "GOOGLE_SPREADSHEET_ID - Your Google Sheets ID",
-                "GOOGLE_SHEET_NAME - Sheet name (default: Sheet1)",
-                "GOOGLE_CREDENTIALS_FILE - Path to credentials.json (default: credentials.json)"
+            "instructions": "Use the sync_sheets tool with any Google Sheets URL to get started!",
+            "example": "Just say: 'Sync this Google Sheet: [paste your URL here]'",
+            "setup_required": [
+                "1. Run OAuth authentication: python oauth_setup.py",
+                "2. Paste any Google Sheets URL into Claude",
+                "3. Start asking questions about your data!"
             ]
         }, indent=2)
     
@@ -328,23 +389,24 @@ async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
             name="sync_sheets",
-            description="Sync data from Google Sheets to local SQLite database",
+            description="Sync data from Google Sheets to local SQLite database. Just paste any Google Sheets URL!",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "spreadsheet_id": {
+                    "url_or_id": {
                         "type": "string",
-                        "description": "Google Sheets spreadsheet ID (optional if set in environment)"
+                        "description": "Google Sheets URL (e.g., https://docs.google.com/spreadsheets/d/ABC123/edit) or just the spreadsheet ID"
                     },
                     "sheet_name": {
                         "type": "string",
-                        "description": "Name of the sheet to sync (optional, defaults to environment or 'Sheet1')"
+                        "description": "Name of the sheet tab to sync (optional, defaults to 'Sheet1')"
                     },
                     "data_range": {
                         "type": "string",
-                        "description": "Data range to sync (optional, defaults to 'A:Z')"
+                        "description": "Data range to sync (optional, defaults to 'A:Z' for all data)"
                     }
-                }
+                },
+                "required": ["url_or_id"]
             },
         ),
         Tool(
@@ -384,30 +446,41 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[types.Text
     """Handle tool calls"""
     
     if name == "sync_sheets":
-        # Get parameters from arguments or environment
-        spreadsheet_id = (arguments.get("spreadsheet_id") if arguments else None) or SPREADSHEET_ID
-        sheet_name = (arguments.get("sheet_name") if arguments else None) or SHEET_NAME
-        data_range = (arguments.get("data_range") if arguments else None) or DATA_RANGE
+        # Get parameters from arguments
+        url_or_id = arguments.get("url_or_id") if arguments else None
+        sheet_name = arguments.get("sheet_name", "Sheet1") if arguments else "Sheet1"
+        data_range = arguments.get("data_range", "A:Z") if arguments else "A:Z"
         
-        if not spreadsheet_id:
-            return [TextContent(type="text", text="Error: Google Spreadsheet ID is required. Set GOOGLE_SPREADSHEET_ID environment variable or provide spreadsheet_id parameter.")]
+        if not url_or_id:
+            return [TextContent(type="text", text="❌ Error: Google Sheets URL or ID is required.\n\nExample usage:\n• \"Sync this sheet: https://docs.google.com/spreadsheets/d/ABC123/edit\"\n• \"Load data from this Google Sheet: [paste URL here]\"")]
         
-        result = sync_sheets_to_sqlite(spreadsheet_id, sheet_name, data_range)
+        result = sync_sheets_to_sqlite(url_or_id, sheet_name, data_range)
         
         if result["success"]:
-            result_text = f"✅ Sync completed successfully!\n\n"
+            cache_indicator = " (cached)" if result.get("cached") else ""
+            result_text = f"✅ Sync completed successfully!{cache_indicator}\n\n"
             result_text += f"📊 Spreadsheet: {result.get('title', 'Unknown')}\n"
+            result_text += f"🔗 URL: {result.get('url', 'Unknown')}\n"
             result_text += f"📄 Sheet: {sheet_name}\n"
-            result_text += f"📈 Rows synced: {result['rows_synced']}\n"
+            result_text += f"📈 Rows synced: {result['rows_synced']:,}\n"
             result_text += f"📋 Columns: {', '.join(result['columns'])}\n\n"
-            result_text += "You can now query your data using the query_database tool!"
+            if result.get("cached"):
+                result_text += "💡 This data was cached from a previous sync. Query away!\n\n"
+            result_text += "🔍 You can now ask questions about your data!\n"
+            result_text += "   • \"What are the column names?\"\n"
+            result_text += "   • \"Show me the first 10 rows\"\n"
+            result_text += "   • \"What's the total number of records?\""
         else:
             result_text = f"❌ Sync failed: {result['error']}\n\n"
-            result_text += "Please check:\n"
-            result_text += "- Google credentials file exists and is valid\n"
-            result_text += "- Spreadsheet ID is correct\n"
-            result_text += "- Sheet name exists in the spreadsheet\n"
-            result_text += "- You have read access to the spreadsheet"
+            if "Could not extract spreadsheet ID" in result['error']:
+                result_text += "💡 Make sure you're using a valid Google Sheets URL like:\n"
+                result_text += "   https://docs.google.com/spreadsheets/d/SHEET_ID/edit\n\n"
+            else:
+                result_text += "Please check:\n"
+                result_text += "- You have run OAuth authentication (python oauth_setup.py)\n"
+                result_text += "- The Google Sheets URL is accessible to your account\n"
+                result_text += "- The sheet name exists (default is 'Sheet1')\n"
+                result_text += "- You have read access to the spreadsheet"
         
         return [TextContent(type="text", text=result_text)]
     
@@ -497,22 +570,29 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[types.Text
         return [TextContent(type="text", text=result_text)]
     
     elif name == "get_sheet_info":
-        metadata = get_sheet_metadata_from_db()
+        global current_sheet_info
         
-        if not metadata:
-            return [TextContent(type="text", text="No sheet information available. Please sync your Google Sheets data first using the sync_sheets tool.")]
+        # Try to get current sheet info, fallback to database metadata
+        if current_sheet_info:
+            info = current_sheet_info
+        else:
+            metadata = get_sheet_metadata_from_db()
+            if not metadata:
+                return [TextContent(type="text", text="📋 No sheet synced yet!\n\n💡 To get started, just say:\n   \"Sync this Google Sheet: [paste your URL here]\"\n\nOr provide any Google Sheets URL and I'll analyze it for you!")]
+            info = metadata
         
-        result_text = "Connected Google Sheet Information\n"
-        result_text += "====================================\n\n"
-        result_text += f"📊 Spreadsheet: {metadata.get('title', 'Unknown')}\n"
-        result_text += f"🆔 Sheet ID: {metadata.get('spreadsheet_id', 'Unknown')}\n"
-        result_text += f"🔗 URL: {metadata.get('url', 'Unknown')}\n"
-        result_text += f"📄 Sheet Name: {metadata.get('sheet_name', 'Unknown')}\n"
-        result_text += f"📊 Data Range: {metadata.get('data_range', 'Unknown')}\n"
-        result_text += f"🔄 Last Sync: {metadata.get('last_sync', 'Unknown')}\n"
-        result_text += f"📈 Total Rows: {metadata.get('total_rows', '0')}\n"
-        result_text += f"📋 Total Columns: {metadata.get('total_columns', '0')}\n\n"
-        result_text += "💡 Use the query_database tool to analyze your data with SQL queries!"
+        result_text = "📊 Current Google Sheet Information\n"
+        result_text += "=" * 40 + "\n\n"
+        result_text += f"📋 Title: {info.get('title', 'Unknown')}\n"
+        result_text += f"🔗 URL: {info.get('url', 'Unknown')}\n"
+        result_text += f"📄 Sheet: {info.get('sheet_name', 'Unknown')}\n"
+        result_text += f"📈 Rows: {info.get('rows_synced', info.get('total_rows', 0)):,}\n"
+        result_text += f"📋 Columns: {len(info.get('columns', []))}\n"
+        if info.get('columns'):
+            result_text += f"   ├─ {', '.join(info['columns'][:5])}\n"
+            if len(info['columns']) > 5:
+                result_text += f"   └─ ... and {len(info['columns']) - 5} more\n"
+        result_text += "\n💡 Ready to answer questions about your data!"
         
         return [TextContent(type="text", text=result_text)]
     
@@ -536,11 +616,14 @@ async def main():
         )
 
 if __name__ == "__main__":
-    # Check for required configuration on startup
-    if not SPREADSHEET_ID:
-        logger.warning("GOOGLE_SPREADSHEET_ID not set. Users will need to provide it when syncing.")
-    
+    # Check for OAuth setup on startup
     if not os.path.exists(CREDENTIALS_FILE):
         logger.warning(f"Google credentials file not found: {CREDENTIALS_FILE}. Please set up Google API credentials.")
+    
+    if not os.path.exists(TOKEN_FILE):
+        logger.warning(f"Google OAuth token not found: {TOKEN_FILE}. Run 'python oauth_setup.py' to authenticate.")
+    
+    logger.info("🚀 Google Sheets Analytics MCP Server starting...")
+    logger.info("💡 Users can now paste Google Sheets URLs directly - no configuration needed!")
     
     asyncio.run(main())

@@ -8,24 +8,15 @@
 # Python files
 __pycache__/
 *.pyc
-.env
 venv/
 *.egg-info/
 
-# Docker
-docker-compose.override.yml
-
-# Sensitive files
-backend/credentials.json
-*.log
-
-# Development tasks
-ai-dev-tasks/
-tasks/ backend/token.json
-backend/token.json
-
-# Sensitive files
-backend/credentials.json
-backend/token.json
+# Sensitive files - NEVER COMMIT THESE
+credentials.json
+token.json
+sheets_data.sqlite
 *.env
 .env*
+
+# Log files
+*.log

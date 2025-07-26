@@ -20,13 +20,14 @@ Transform any Google Sheets spreadsheet into a conversational database! This MCP
 
 ## Features
 
-✨ **Easy Google Sheets Integration** - Connect any spreadsheet with just the sheet ID  
+✨ **Paste & Analyze** - Just paste any Google Sheets URL and start asking questions!  
 🔄 **Automatic Data Sync** - Sync your Google Sheets data to local SQLite for fast queries  
 💬 **Natural Language Queries** - Ask questions in plain English  
 🔍 **SQL Interface** - Execute custom SQL queries for advanced analysis  
 📊 **Schema Exploration** - Automatically understand your data structure  
 ⚡ **Fast Performance** - Local SQLite database for instant results  
 🔐 **Secure Authentication** - Uses Google's OAuth2 for secure access  
+🚀 **Zero Configuration** - No environment variables or complex setup required  
 
 ## Prerequisites
 
@@ -34,6 +35,35 @@ Transform any Google Sheets spreadsheet into a conversational database! This MCP
 - MCP-compatible client (Claude Desktop, Continue, etc.)
 - Google account with access to Google Sheets
 - Google Cloud Project with Sheets API enabled
+
+## Quick Start Checklist
+
+**For Automated Setup (Recommended):**
+- [ ] ✅ **Python 3.8+** installed (`python3 --version`)
+- [ ] ✅ **Google Cloud Project** with Sheets API enabled
+- [ ] ✅ **OAuth2 credentials** downloaded as `credentials.json`
+- [ ] ✅ **Run automated setup:** `python3 setup.py`
+- [ ] ✅ **Add generated config to Claude Desktop**
+- [ ] ✅ **Restart Claude Desktop** completely
+
+**For Manual Setup:**
+- [ ] ✅ **Python 3.8+** installed (`python3 --version`)
+- [ ] ✅ **Virtual environment** created and activated
+- [ ] ✅ **Dependencies** installed in virtual environment  
+- [ ] ✅ **Google Cloud Project** with Sheets API enabled
+- [ ] ✅ **OAuth2 credentials** downloaded as `credentials.json`
+- [ ] ✅ **OAuth authentication** completed using oauth_setup.py
+- [ ] ✅ **Absolute file paths** used in Claude Desktop config
+- [ ] ✅ **Virtual environment Python path** used in config
+- [ ] ✅ **Claude Desktop** completely restarted after config changes
+
+**Common mistakes that cause errors:**
+- ❌ Using `python` instead of `python3`
+- ❌ Using system Python instead of virtual environment Python
+- ❌ Using relative paths instead of absolute paths  
+- ❌ Not restarting Claude Desktop after config changes
+- ❌ Missing `credentials.json` file
+- ❌ Skipping OAuth authentication step
 
 ## Step-by-Step Setup
 
@@ -53,35 +83,81 @@ Transform any Google Sheets spreadsheet into a conversational database! This MCP
    - Choose "Desktop application"
    - Download the JSON file and save it as `credentials.json` in this project directory
 
-### 2. Install Dependencies
+### 2. Clone and Setup Project
 
+**Option A: Automated Setup (Recommended)**
 ```bash
+# Clone the repository
+git clone https://github.com/your-username/google-sheet-analytics-mcp.git
+cd google-sheet-analytics-mcp
+
+# Add your credentials.json file (see step 1 above)
+# Then run the automated setup:
+python3 setup.py
+```
+
+**Option B: Manual Setup**
+```bash
+# Clone the repository
+git clone https://github.com/your-username/google-sheet-analytics-mcp.git
+cd google-sheet-analytics-mcp
+
+# Create virtual environment (RECOMMENDED)
+python3 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Configure Your Google Sheet
+**⚠️ Important:** The automated setup will handle everything including OAuth authentication!
 
-1. **Get your Google Sheets ID:**
-   - Open your Google Sheet
-   - Copy the ID from the URL: `https://docs.google.com/spreadsheets/d/[SHEET_ID]/edit`
+### 3. Complete Setup (Automated)
 
-2. **Set environment variables:**
-   ```bash
-   export GOOGLE_SPREADSHEET_ID="your_sheet_id_here"
-   export GOOGLE_SHEET_NAME="Sheet1"  # Optional, defaults to Sheet1
-   export GOOGLE_DATA_RANGE="A:Z"     # Optional, defaults to A:Z
-   ```
+If you used the automated setup (`python3 setup.py`), everything is already done! Skip to step 5.
 
-   Or create a `.env` file (copy from `.env.example`):
-   ```
-   GOOGLE_SPREADSHEET_ID=your_sheet_id_here
-   GOOGLE_SHEET_NAME=Sheet1
-   GOOGLE_DATA_RANGE=A:Z
-   ```
+If you used manual setup, complete these steps:
 
-### 4. Configure Your MCP Client
+**Manual Setup Only:**
+```bash
+# Make sure virtual environment is activated
+source venv/bin/activate
 
-#### For Claude Desktop:
+# Test the MCP server
+python mcp_server.py
+```
+
+You should see: `🚀 Google Sheets Analytics MCP Server starting...` and `💡 Users can now paste Google Sheets URLs directly - no configuration needed!`
+
+### 4. OAuth Authentication (Manual Setup Only)
+
+**If you used automated setup, this is already done!**
+
+For manual setup, run OAuth authentication:
+
+```bash
+# Make sure virtual environment is activated
+source venv/bin/activate
+
+# Run OAuth setup
+python oauth_setup.py
+```
+
+The tool will:
+1. Check your `credentials.json` file
+2. Open Google OAuth in your browser
+3. Let you select your Google account
+4. Complete authentication automatically
+5. Save your token for future use
+
+### 5. Configure Claude Desktop
+
+#### Automated Setup Users:
+**If you used `python3 setup.py`, the exact configuration was already displayed at the end of setup!** Just copy and paste it.
+
+#### Manual Setup Users:
 
 1. Open Claude Desktop settings
 2. Add a new MCP server configuration:
@@ -90,58 +166,77 @@ pip install -r requirements.txt
 {
   "mcpServers": {
     "google-sheets-analytics": {
-      "command": "python",
-      "args": ["/path/to/your/mcp_server.py"],
-      "cwd": "/path/to/your/project",
-      "env": {
-        "GOOGLE_SPREADSHEET_ID": "your_sheet_id_here",
-        "GOOGLE_SHEET_NAME": "Sheet1"
-      }
+      "command": "/FULL/PATH/TO/YOUR/PROJECT/venv/bin/python",
+      "args": ["/FULL/PATH/TO/YOUR/PROJECT/mcp_server.py"],
+      "cwd": "/FULL/PATH/TO/YOUR/PROJECT"
     }
   }
 }
 ```
 
-3. Replace `/path/to/your/` with the actual path to your project directory
-4. Replace `your_sheet_id_here` with your actual Google Sheets ID
-5. Restart Claude Desktop
+3. **Replace the paths:**
+   - Replace `/FULL/PATH/TO/YOUR/PROJECT` with your actual project directory path
+   - **Important:** Use the virtual environment Python path (`venv/bin/python`)
+
+4. **Get your exact paths:**
+   ```bash
+   pwd  # Copy this output for your project path
+   ```
+
+5. **Save the configuration and completely restart Claude Desktop** (Cmd+Q, then reopen)
 
 #### For Other MCP Clients:
 
 Refer to your client's documentation for adding MCP servers. Use:
-- **Command**: `python`
-- **Args**: `["/path/to/mcp_server.py"]`
+- **Command**: `/full/path/to/your/project/venv/bin/python`
+- **Args**: `["/full/path/to/your/project/mcp_server.py"]`
 - **Working Directory**: Your project directory
-- **Environment Variables**: Set `GOOGLE_SPREADSHEET_ID` and optionally `GOOGLE_SHEET_NAME`
+- **Environment Variables**: None needed!
 
-### 5. Sync and Analyze Your Data
+### 6. Start Using Google Sheets Analytics!
 
-1. **First, sync your Google Sheets data:**
-   ```
-   "Sync my Google Sheets data"
-   ```
-   This will authenticate with Google (opens browser) and import your data.
+#### ✅ **You're Ready!**
 
-2. **Start analyzing:**
-   ```
-   "Describe my data structure"
-   "What are the column names and data types?"
-   "Show me the first 10 rows"
-   "What's the total number of records?"
-   ```
+1. **Restart Claude Desktop completely** (Cmd+Q, then reopen)
+2. **Verify the connection** - you should see Google Sheets Analytics tools available
+3. **Start analyzing any Google Sheet immediately:**
 
-3. **Ask business questions:**
-   ```
-   "What are my top customers by revenue?"
-   "Show me sales trends over time"
-   "Which products have the highest profit margins?"
-   ```
+#### 🚀 **Just Paste Any Google Sheets URL:**
+```
+"Analyze this Google Sheet: https://docs.google.com/spreadsheets/d/ABC123/edit"
+"Load data from: [paste any Google Sheets URL]" 
+"Sync this sheet: https://docs.google.com/spreadsheets/d/XYZ789/edit"
+```
+The server automatically extracts the sheet ID and syncs your data!
+
+#### 📊 **Start Analyzing Immediately:**
+```
+"Describe my data structure"
+"What are the column names and data types?"
+"Show me the first 10 rows"
+"What's the total number of records?"
+```
+
+#### 💼 **Ask Business Questions:**
+```
+"What are my top customers by revenue?"
+"Show me sales trends over time"  
+"Which products have the highest profit margins?"
+"Find all transactions from last quarter"
+```
+
+#### 🔄 **Switch Between Sheets Anytime:**
+```
+"Now analyze this other sheet: https://docs.google.com/spreadsheets/d/XYZ789/edit"
+```
+
+**That's it!** No configuration, no environment variables - just paste URLs and start asking questions! 🎯
 
 ## Available Tools
 
 The server provides these tools for working with your Google Sheets data:
 
-1. **sync_sheets**: Sync data from Google Sheets to local SQLite database
+1. **sync_sheets**: Sync data from any Google Sheets URL to local SQLite database
 2. **query_database**: Execute SQL queries on your synced data
 3. **describe_table**: Get schema information and sample data
 4. **get_sheet_info**: View information about your connected Google Sheet
@@ -156,8 +251,8 @@ The server provides these tools for working with your Google Sheets data:
 ## Example Workflow
 
 ```
-# 1. Sync your data
-User: "Sync my Google Sheets data"
+# 1. Paste any Google Sheets URL
+User: "Analyze this spreadsheet: https://docs.google.com/spreadsheets/d/ABC123/edit"
 MCP: ✅ Synced 1,234 rows from 'Sales Data' sheet
 
 # 2. Explore your data
@@ -168,8 +263,12 @@ MCP: Your data has columns: date, customer, product, amount, region
 User: "What are my top 5 customers by total sales?"
 MCP: [Executes SQL and returns results]
 
-# 4. Get insights
-User: "Show me monthly sales trends"
+# 4. Switch to another sheet anytime
+User: "Now analyze this other sheet: https://docs.google.com/spreadsheets/d/XYZ789/edit"
+MCP: ✅ Synced 856 rows from 'Marketing Data' sheet
+
+# 5. Get insights from any sheet
+User: "Show me monthly trends"
 MCP: [Groups data by month and shows trends]
 ```
 
@@ -179,14 +278,19 @@ After setup, your project should contain:
 ```
 .
 ├── mcp_server.py              # Main MCP server
+├── setup.py                   # Automated setup script  
+├── oauth_setup.py            # Interactive OAuth setup tool
+├── post-clone.sh             # Alternative setup script
 ├── requirements.txt           # Python dependencies
-├── credentials.json           # Google API credentials (you create this)
 ├── credentials.json.example   # Example credentials file
-├── .env.example              # Environment variables example
-├── token.json                # OAuth token (auto-generated)
+├── credentials.json           # Google API credentials (you create this)
+├── token.json                # OAuth token (auto-generated after setup)
 ├── sheets_data.sqlite        # Your synced data (auto-generated)
+├── venv/                     # Virtual environment (auto-created)
 └── README.md                 # This file
 ```
+
+**Note:** `credentials.json`, `token.json`, `sheets_data.sqlite`, and `venv/` are not included in the repository for security reasons.
 
 ## Troubleshooting
 
@@ -197,21 +301,35 @@ After setup, your project should contain:
 - If authentication fails, delete `token.json` and try again
 
 **Sync Issues:**
-- Verify the spreadsheet ID is correct
-- Check that the sheet name exists in your spreadsheet
-- Ensure the data range covers your actual data
+- Make sure you're pasting a valid Google Sheets URL
+- Check that the sheet name exists in your spreadsheet (defaults to 'Sheet1')
+- Ensure the data range covers your actual data (defaults to 'A:Z')
 - Make sure the spreadsheet is not empty
+- Verify your Google account has access to the spreadsheet
 
 **MCP Client Issues:**
-- Verify file paths in your MCP client configuration
-- Check that environment variables are set correctly
-- Restart your MCP client after configuration changes
-- Check the client logs for error messages
+- **"spawn ENOENT" errors**: The Python path is wrong or virtual environment doesn't exist
+  - Check that `/path/to/project/venv/bin/python` exists
+  - Verify you created the virtual environment: `python3 -m venv venv`
+- **"ModuleNotFoundError: No module named 'mcp'"**: Dependencies not installed in virtual environment
+  - Run: `source venv/bin/activate && pip install -r requirements.txt`
+- **Wrong file paths**: Use absolute paths, not relative paths
+- **Configuration not updating**: Completely restart Claude Desktop (Cmd+Q)
+- **Check logs**: Look at `/Users/yourname/Library/Logs/Claude/mcp-server-google-sheets-analytics.log`
 
 **No Data Issues:**
-- Run the sync tool first: "Sync my Google Sheets data"
-- Check if `sheets_data.sqlite` file exists
+- Paste a Google Sheets URL first: "Analyze this sheet: [URL]"
+- **"Failed to authenticate"**: Run `python oauth_setup.py` and complete OAuth
+- **"Could not extract spreadsheet ID"**: Make sure you're using a valid Google Sheets URL
+- **"No data found"**: Make sure the sheet name exists (try 'Sheet1')
+- Check if `sheets_data.sqlite` file exists after sync
 - Verify data was imported: "Describe my data structure"
+
+**Quick Diagnosis:**
+1. Check MCP server logs: `/Users/yourname/Library/Logs/Claude/mcp-server-google-sheets-analytics.log`
+2. Test server directly: `source venv/bin/activate && python mcp_server.py`
+3. Verify virtual environment: `ls venv/bin/python` should exist
+4. Check dependencies: `source venv/bin/activate && pip list | grep mcp`
 
 ## Security Notes
 
