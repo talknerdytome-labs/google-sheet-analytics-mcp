@@ -20,3 +20,7 @@ sheets_data.sqlite
 
 # Log files
 *.log
+
+# Development files
+.claude/
+CLAUDE.md

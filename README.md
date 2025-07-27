@@ -236,10 +236,21 @@ The server automatically extracts the sheet ID and syncs your data!
 
 The server provides these tools for working with your Google Sheets data:
 
+### Core Tools
 1. **sync_sheets**: Sync data from any Google Sheets URL to local SQLite database
-2. **query_database**: Execute SQL queries on your synced data
+2. **query_database**: Execute SQL queries on your synced data (with automatic caching)
 3. **describe_table**: Get schema information and sample data
 4. **get_sheet_info**: View information about your connected Google Sheet
+
+### Optimization Tools (New!)
+5. **batch_query**: Execute multiple SQL queries in a single batch for improved performance
+6. **analyze_schema**: Get comprehensive data analysis including statistics, data types, and sample values
+7. **quick_analysis**: One-stop analysis that combines sync + schema analysis + sample data in a single call
+
+### Performance Features
+- **Query Caching**: Automatic caching of query results with 5-minute TTL
+- **Batch Processing**: Execute multiple queries in single database connection
+- **Smart Analysis**: Comprehensive data overview reduces tool calls by 60-80%
 
 ## How It Works
 
@@ -271,6 +282,41 @@ MCP: ✅ Synced 856 rows from 'Marketing Data' sheet
 User: "Show me monthly trends"
 MCP: [Groups data by month and shows trends]
 ```
+
+## Performance & Optimization
+
+### New Workflow Examples
+
+**Traditional approach (multiple tool calls):**
+```
+User: "Analyze this sheet: [URL]"
+1. sync_sheets → ✅ Synced 1000 rows
+2. describe_table → Schema info
+3. query_database → Sample data
+4. query_database → Column statistics
+5. query_database → Data validation
+Total: 5 tool calls
+```
+
+**Optimized approach (single tool call):**
+```
+User: "Quick analysis of this sheet: [URL]"
+1. quick_analysis → ✅ Complete analysis with sync + schema + samples + insights
+Total: 1 tool call (80% reduction!)
+```
+
+**Batch queries for complex analysis:**
+```
+User: "I need sales summary, top customers, and monthly trends"
+1. batch_query → Execute 3 SQL queries simultaneously with timing metrics
+Total: 1 tool call instead of 3
+```
+
+### Performance Benefits
+- **Faster Analysis**: 60-80% reduction in tool calls for typical workflows
+- **Smart Caching**: Repeated queries return instantly from cache
+- **Batch Processing**: Multiple queries executed in single database connection
+- **Comprehensive Overview**: Get complete data understanding in one call
 
 ## File Structure
 
