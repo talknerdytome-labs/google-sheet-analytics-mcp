@@ -17,6 +17,8 @@ token.json
 sheets_data.sqlite
 *.env
 .env*
+data/
+claude_desktop_config.json
 
 # Log files
 *.log
