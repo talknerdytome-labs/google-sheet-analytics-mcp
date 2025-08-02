@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "tntm-sheets-server": {
+      "command": "python",
+      "args": ["src/mcp_server.py"],
+      "cwd": ".",
+      "env": {},
+      "name": "TNTM Google Sheets Analytics",
+      "description": "Analyze Google Sheets data with natural language queries powered by TNTM",
+      "icon": "assets/tntm-logo.png",
+      "version": "1.0.0",
+      "author": "TNTM",
+      "homepage": "https://github.com/tntm/google-sheets-mcp"
+    }
+  }
+}

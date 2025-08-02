@@ -1,6 +1,8 @@
-# Google Sheets Analytics MCP Server
+# TNTM Google Sheets Analytics MCP Server
 
-A clean, practical MCP (Model Context Protocol) server for analyzing Google Sheets data with multi-tab support. Built for Claude Desktop and other MCP-compatible AI assistants.
+![TNTM Logo](assets/tntm-logo.png)
+
+A clean, practical MCP (Model Context Protocol) server for analyzing Google Sheets data with multi-tab support. Built for Claude Desktop and other MCP-compatible AI assistants by TNTM.
 
 ## 🚀 Features
 
@@ -36,19 +38,23 @@ pip install -r requirements.txt
 4. Create OAuth2 credentials (Desktop Application)
 5. Download the credentials and save as `credentials.json` in the project root
 
-### 3. Configure MCP Client
-Run the setup script to automatically configure Claude Desktop:
+### 3. Run Automated Setup
 ```bash
-python setup_claude_desktop.py
+python3 setup.py
 ```
 
-Or manually add to your MCP client configuration:
+This will:
+- Set up OAuth authentication
+- Configure Claude Desktop automatically
+- Test the connection
+
+Or configure MCP client manually:
 ```json
 {
   "mcpServers": {
     "google-sheets-analytics": {
       "command": "/path/to/your/venv/bin/python",
-      "args": ["/path/to/google-sheet-analytics-mcp/mcp_server.py"]
+      "args": ["/path/to/google-sheet-analytics-mcp/src/mcp_server.py"]
     }
   }
 }
@@ -108,12 +114,19 @@ Use get_sheet_preview with url "https://docs.google.com/spreadsheets/d/your_shee
 
 ```
 google-sheet-analytics-mcp/
-├── mcp_server.py              # Main MCP server (single file!)
-├── setup_claude_desktop.py    # Automatic Claude Desktop configuration
+├── src/
+│   ├── mcp_server.py          # Main MCP server implementation
+│   └── auth/
+│       └── oauth_setup.py     # Unified OAuth authentication module
+├── setup.py                   # Unified setup script (handles everything)
 ├── requirements.txt           # Python dependencies
 ├── credentials.json.example   # Example OAuth credentials format
 ├── README.md                  # This file
 ├── LICENSE                    # MIT License
+├── CLAUDE.md                  # Claude-specific instructions
+├── data/                      # Runtime data (created automatically)
+│   ├── token.json            # OAuth token (created during setup)
+│   └── sheets_data.sqlite    # Local database (created on first sync)
 └── venv/                      # Virtual environment (created during setup)
 ```
 
@@ -164,13 +177,34 @@ ORDER BY total_revenue DESC
 
 ## 🐛 Troubleshooting
 
+### Common Issues
+
 | Issue | Solution |
 |-------|----------|
-| "No credentials found" | Ensure `credentials.json` exists in project root |
-| "Authentication failed" | Delete `token.json` and re-run OAuth flow |
+| "No credentials found" | Ensure `credentials.json` exists in project root or `config/` directory |
+| "Authentication failed" | Check token status with `venv/bin/python src/auth/oauth_setup.py --status` |
+| "Token expired" | Run `venv/bin/python src/auth/oauth_setup.py --test` (auto-refreshes) |
 | "Sync timeout" | Reduce `max_rows` parameter in smart_sync |
-| "Tools not appearing" | Restart MCP client after configuration |
+| "Tools not appearing" | Restart Claude Desktop after configuration |
 | "Rate limit errors" | Wait a few minutes and try again with smaller batches |
+
+### OAuth Troubleshooting
+- **Check status**: `venv/bin/python src/auth/oauth_setup.py --status`
+- **Test auth**: `venv/bin/python src/auth/oauth_setup.py --test`
+- **Reset OAuth**: `venv/bin/python src/auth/oauth_setup.py --reset`
+- **Manual setup**: `venv/bin/python src/auth/oauth_setup.py --manual`
+
+### MCP Server Not Appearing
+1. Ensure Claude Desktop is fully closed
+2. Verify config: `cat ~/Library/Application\ Support/Claude/claude_desktop_config.json`
+3. Check the config includes the google-sheets-analytics server
+4. Restart Claude Desktop
+5. Check developer console for errors
+
+### Database Issues
+- Database location: `data/sheets_data.sqlite`
+- Reset database: Delete the file and re-sync
+- Check synced sheets: Use the `list_synced_sheets` tool
 
 ## 🤝 Contributing
 
