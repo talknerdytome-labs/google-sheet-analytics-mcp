@@ -1,0 +1,35 @@
+#!/usr/bin/env node
+
+const path = require('path');
+const { spawn } = require('child_process');
+const chalk = require('chalk');
+
+// Check if virtual environment exists
+const venvPath = path.join(__dirname, '..', '.venv');
+const pythonBin = process.platform === 'win32'
+  ? path.join(venvPath, 'Scripts', 'python.exe')
+  : path.join(venvPath, 'bin', 'python');
+
+const serverPath = path.join(__dirname, '..', 'src', 'mcp_server.py');
+
+// Spawn Python MCP server
+const server = spawn(pythonBin, [serverPath], {
+  stdio: 'inherit',
+  env: { ...process.env }
+});
+
+server.on('error', (err) => {
+  console.error(chalk.red('Failed to start MCP server:'), err);
+  process.exit(1);
+});
+
+server.on('exit', (code) => {
+  process.exit(code);
+});
+
+// Handle signals
+['SIGINT', 'SIGTERM'].forEach(signal => {
+  process.on(signal, () => {
+    server.kill(signal);
+  });
+});

@@ -1,0 +1,47 @@
+# Development files
+.git/
+.github/
+.claude/
+.venv/
+venv/
+*.pyc
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+src/__pycache__/
+
+# Local configuration
+credentials.json
+token.json
+sheets_data.sqlite*
+.env
+config/credentials.json
+data/
+
+# Development dependencies
+tests/
+*.test.js
+*.spec.js
+test-*.js
+run-all-tests.js
+qa-agent.js
+.eslintrc
+.prettierrc
+
+# Documentation
+docs/
+*.md
+!README.npm.md
+!README.md
+*_STATUS.md
+TESTING_*.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
