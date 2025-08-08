@@ -42,10 +42,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/tntm/google-sheets-mcp.git"
+    "url": "https://github.com/talknerdytome-labs/google-sheet-analytics-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/tntm/google-sheets-mcp/issues"
+    "url": "https://github.com/talknerdytome-labs/google-sheet-analytics-mcp/issues"
   },
-  "homepage": "https://github.com/tntm/google-sheets-mcp#readme"
+  "homepage": "https://github.com/talknerdytome-labs/google-sheet-analytics-mcp#readme"
 }
