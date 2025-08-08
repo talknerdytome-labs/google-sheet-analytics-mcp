@@ -1,229 +1,158 @@
-# TNTM Google Sheets Analytics MCP Server
+# @talknerdytome/google-sheets-mcp
 
-![TNTM Logo](assets/tntm-logo.png)
+A powerful MCP (Model Context Protocol) server for analyzing Google Sheets data with natural language. Built for Claude Desktop and other MCP-compatible AI assistants.
 
-A clean, practical MCP (Model Context Protocol) server for analyzing Google Sheets data with multi-tab support. Built for Claude Desktop and other MCP-compatible AI assistants by TNTM.
+## 🚀 Quick Start
 
-## 🚀 Features
+```bash
+npm install -g @talknerdytome/google-sheets-mcp
+```
 
-- **Smart Sync** - Sync Google Sheets with configurable row limits to prevent timeouts
-- **Multi-tab Support** - Query across multiple sheets with SQL JOINs
-- **SQL Queries** - Direct SQL access to synced data
-- **Sheet Analysis** - Get suggestions for cross-sheet queries
-- **Quick Preview** - Preview sheets without full sync
-- **Performance Optimized** - Row limits and result pagination for large datasets
+## ✨ Features
+
+- **Smart Sync** - Intelligently sync Google Sheets with configurable limits
+- **Multi-tab Support** - Query across multiple sheets with SQL JOINs  
+- **SQL Queries** - Direct SQL access to synced spreadsheet data
+- **Natural Language Analysis** - Ask questions about your data in plain English
+- **Performance Optimized** - Handles large datasets with pagination and row limits
+- **Zero Configuration** - Just paste Google Sheets URLs and start analyzing
 
 ## 📋 Prerequisites
 
-- Python 3.8+
-- Claude Desktop or another MCP-compatible client
-- Google Cloud Project with Sheets API enabled
-- OAuth2 credentials from Google Cloud Console
+- Node.js 16+
+- Python 3.8-3.12 (auto-managed by the package)
+- Google Cloud project with Sheets API enabled
 
 ## 🛠️ Setup
 
-### 1. Clone and Install
+### 1. Install the Package
+
 ```bash
-git clone https://github.com/yourusername/google-sheet-analytics-mcp.git
-cd google-sheet-analytics-mcp
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+npm install -g @talknerdytome/google-sheets-mcp
 ```
 
 ### 2. Google Cloud Setup
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing one
-3. Enable the Google Sheets API
-4. Create OAuth2 credentials (Desktop Application)
-5. Download the credentials and save as `credentials.json` in the project root
 
-### 3. Run Automated Setup
-```bash
-python3 setup.py
-```
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a new project or select existing
+3. Enable Google Sheets API
+4. Create OAuth 2.0 credentials (Desktop Application)
+5. Download credentials as `credentials.json`
 
-This will:
-- Set up OAuth authentication
-- Configure Claude Desktop automatically
-- Test the connection
+### 3. Configure Claude Desktop
 
-Or configure MCP client manually:
+Add to your Claude Desktop configuration:
+
 ```json
 {
   "mcpServers": {
-    "google-sheets-analytics": {
-      "command": "/path/to/your/venv/bin/python",
-      "args": ["/path/to/google-sheet-analytics-mcp/src/mcp_server.py"]
+    "google-sheets": {
+      "command": "npx",
+      "args": ["@talknerdytome/google-sheets-mcp"]
     }
   }
 }
 ```
 
-### 4. First Run
-Restart your MCP client (e.g., Claude Desktop) and the OAuth flow will start automatically on first tool use.
+### 4. First Run Setup
 
-## 🔧 Tools
+The package will automatically:
+- Set up Python virtual environment
+- Install Python dependencies  
+- Guide you through OAuth authentication
+- Configure your credentials
 
-### `smart_sync`
-Sync Google Sheet data with performance controls.
-```
-Use smart_sync with url "https://docs.google.com/spreadsheets/d/your_sheet_id" and max_rows 500
-```
-- `url` (required): Google Sheets URL
-- `max_rows` (optional): Max rows per sheet (default: 1000)
-- `sheets` (optional): Array of specific sheet names to sync
+## 🎯 Usage
 
-### `query_sheets`  
-Run SQL queries on synced data, including JOINs across tabs.
-```
-Use query_sheets with query "SELECT * FROM sheet1 JOIN sheet2 ON sheet1.id = sheet2.id LIMIT 10"
-```
-- `query` (required): SQL query to execute
+### With Claude Desktop
 
-### `list_synced_sheets`
-View all synced sheets and their table names.
-```
-Use list_synced_sheets
-```
-
-### `analyze_sheets`
-Get suggestions for queries across multiple sheets.
-```
-Use analyze_sheets with question "How can I combine sales data with customer data?"
-```
-- `question` (required): What you want to analyze
-
-### `get_sheet_preview`
-Quick preview without syncing.
-```
-Use get_sheet_preview with url "https://docs.google.com/spreadsheets/d/your_sheet_id" and rows 20
-```
-- `url` (required): Google Sheets URL
-- `sheet_name` (optional): Specific sheet to preview
-- `rows` (optional): Number of rows to preview (default: 10)
-
-## 📊 How It Works
-
-1. **Authentication** - Uses OAuth2 to securely access Google Sheets API
-2. **Sync** - Downloads sheet data to local SQLite database with configurable limits
-3. **Query** - Enables SQL queries across all synced sheets
-4. **Multi-tab** - Each sheet becomes a separate table, joinable via SQL
-
-## 🏗️ Project Structure
+Simply paste a Google Sheets URL and start asking questions:
 
 ```
-google-sheet-analytics-mcp/
-├── src/
-│   ├── mcp_server.py          # Main MCP server implementation
-│   └── auth/
-│       └── oauth_setup.py     # Unified OAuth authentication module
-├── setup.py                   # Unified setup script (handles everything)
-├── requirements.txt           # Python dependencies
-├── credentials.json.example   # Example OAuth credentials format
-├── README.md                  # This file
-├── LICENSE                    # MIT License
-├── CLAUDE.md                  # Claude-specific instructions
-├── data/                      # Runtime data (created automatically)
-│   ├── token.json            # OAuth token (created during setup)
-│   └── sheets_data.sqlite    # Local database (created on first sync)
-└── venv/                      # Virtual environment (created during setup)
+"Analyze the sales data from https://docs.google.com/spreadsheets/d/..."
+"What are the top performing products this quarter?"
+"Show me year-over-year growth trends"
+"Compare revenue across different regions"
 ```
 
-## ⚡ Performance
+### Available MCP Tools
 
-- **Row Limits**: Default 1000 rows per sheet (configurable)
-- **Result Limits**: Query results limited to 100 rows
-- **Local Storage**: SQLite database for fast repeated queries
-- **Metadata Tracking**: Efficient re-syncing of changed data
-- **Memory Efficient**: Streaming data processing
+- **`smart_sync`** - Sync sheets with intelligent row limits
+- **`query_sheets`** - Execute SQL queries on synced data
+- **`analyze_sheets`** - Get natural language insights
+- **`list_synced_sheets`** - View all available data
+- **`get_sheet_preview`** - Quick preview without full sync
+- **`check_sheet_changes`** - Monitor for updates
+- **`batch_sync_changes`** - Sync multiple sheets efficiently
 
-## 🔍 Example Use Cases
+## 💡 Examples
 
-### Multi-tab Analysis
-```sql
--- Combine sales data with customer information
-SELECT 
-  s.product_name, 
-  s.sales_amount, 
-  c.customer_name, 
-  c.customer_segment
-FROM sales_data s 
-JOIN customer_data c ON s.customer_id = c.id
-WHERE s.sales_amount > 1000
+### Basic Data Analysis
+```
+"Load this spreadsheet and show me a summary of the data"
+"What's the average order value in my sales sheet?"
+"Find all customers from California"
 ```
 
-### Cross-sheet Aggregation
-```sql
--- Total revenue by region from multiple sheets
-SELECT 
-  region, 
-  SUM(amount) as total_revenue
-FROM (
-  SELECT region, amount FROM q1_sales
-  UNION ALL
-  SELECT region, amount FROM q2_sales
-)
-GROUP BY region
-ORDER BY total_revenue DESC
+### Cross-Sheet Analysis  
+```
+"Join the customers sheet with the orders sheet and show top buyers"
+"Compare Q1 vs Q2 performance across all sheets"
+"Create a pivot table from the combined data"
 ```
 
-## 🔒 Security
+### Advanced Queries
+```
+"Show me a SQL query to find customers who haven't ordered in 90 days"
+"What's the correlation between marketing spend and sales?"
+"Identify seasonal trends in the data"
+```
 
-- OAuth2 authentication with Google
-- Credentials stored locally (never committed to repo)
-- Read-only access to Google Sheets
-- Local SQLite database (no external data transmission)
+## 🔧 Configuration
 
-## 🐛 Troubleshooting
+### Row Limits
+Automatically configured based on sheet size:
+- Small sheets (< 1000 rows): Full sync
+- Medium sheets (1000-5000 rows): 2500 rows
+- Large sheets (> 5000 rows): 1000 rows
 
-### Common Issues
+### Data Caching
+- Local SQLite database for fast queries
+- Automatic change detection
+- Incremental updates for efficiency
 
-| Issue | Solution |
-|-------|----------|
-| "No credentials found" | Ensure `credentials.json` exists in project root or `config/` directory |
-| "Authentication failed" | Check token status with `venv/bin/python src/auth/oauth_setup.py --status` |
-| "Token expired" | Run `venv/bin/python src/auth/oauth_setup.py --test` (auto-refreshes) |
-| "Sync timeout" | Reduce `max_rows` parameter in smart_sync |
-| "Tools not appearing" | Restart Claude Desktop after configuration |
-| "Rate limit errors" | Wait a few minutes and try again with smaller batches |
+## 🚨 Troubleshooting
 
-### OAuth Troubleshooting
-- **Check status**: `venv/bin/python src/auth/oauth_setup.py --status`
-- **Test auth**: `venv/bin/python src/auth/oauth_setup.py --test`
-- **Reset OAuth**: `venv/bin/python src/auth/oauth_setup.py --reset`
-- **Manual setup**: `venv/bin/python src/auth/oauth_setup.py --manual`
+### Authentication Issues
+```bash
+# Check status
+npx @talknerdytome/google-sheets-mcp --help
 
-### MCP Server Not Appearing
-1. Ensure Claude Desktop is fully closed
-2. Verify config: `cat ~/Library/Application\ Support/Claude/claude_desktop_config.json`
-3. Check the config includes the google-sheets-analytics server
-4. Restart Claude Desktop
-5. Check developer console for errors
+# Reset credentials (if package supports it)
+rm -rf ~/.google-sheets-mcp/
+```
 
-### Database Issues
-- Database location: `data/sheets_data.sqlite`
-- Reset database: Delete the file and re-sync
-- Check synced sheets: Use the `list_synced_sheets` tool
+### Permission Errors
+- Ensure your Google Cloud project has Sheets API enabled
+- Verify OAuth credentials are correctly configured
+- Check that the spreadsheet is accessible to your Google account
 
-## 🤝 Contributing
+### Performance Issues
+- Large sheets automatically use row limits
+- Use preview mode for initial exploration
+- Consider breaking very large datasets into smaller sheets
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## 🤝 Support
+
+- **Issues**: [GitHub Issues](https://github.com/talknerdytome-labs/google-sheet-analytics-mcp/issues)
+- **Documentation**: [GitHub Repository](https://github.com/talknerdytome-labs/google-sheet-analytics-mcp)
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT © TNTM
 
-## 🙏 Acknowledgments
+## 🔗 Links
 
-- Built for the [Model Context Protocol](https://modelcontextprotocol.io/)
-- Designed for [Claude Desktop](https://claude.ai/download)
-- Uses [Google Sheets API](https://developers.google.com/sheets/api)
-
----
-
-**Need help?** Open an issue on GitHub or check the troubleshooting section above.
+- [GitHub Repository](https://github.com/talknerdytome-labs/google-sheet-analytics-mcp)
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Claude Desktop](https://claude.ai/desktop)
