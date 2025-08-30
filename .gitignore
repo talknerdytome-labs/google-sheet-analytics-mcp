@@ -20,9 +20,22 @@ sheets_data.sqlite
 data/
 claude_desktop_config.json
 
+# Additional security patterns
+*_secret*
+*_private*
+*.key
+*.pem
+*.p12
+*.pfx
+config/credentials*
+auth_config*
+
 # Log files
 *.log
 
 # Development files
 .claude/
 CLAUDE.md
+
+# Backup files
+*.backup

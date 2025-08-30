@@ -59,8 +59,15 @@ class GoogleSheetsService:
         self.force_refresh_threshold = 86400  # Force refresh after 24 hours
     
     def _init_database(self):
-        """Initialize SQLite database with metadata table"""
-        with sqlite3.connect(self.db_path) as conn:
+        """Initialize SQLite database with metadata table and optimal settings"""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            # Configure SQLite for better concurrency and performance
+            conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging for better concurrency
+            conn.execute("PRAGMA synchronous=NORMAL")  # Balance between safety and performance  
+            conn.execute("PRAGMA cache_size=10000")  # Increase cache size
+            conn.execute("PRAGMA temp_store=memory")  # Store temp tables in memory
+            conn.execute("PRAGMA mmap_size=268435456")  # 256MB memory map
+            
             # Metadata table to track synced sheets
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS _sheet_metadata (
@@ -76,6 +83,27 @@ class GoogleSheetsService:
                     PRIMARY KEY (spreadsheet_id, sheet_name)
                 )
             """)
+            
+            # Add indexes for commonly queried columns
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_metadata_spreadsheet 
+                ON _sheet_metadata(spreadsheet_id)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_metadata_sync_time 
+                ON _sheet_metadata(sync_time)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_metadata_table_name 
+                ON _sheet_metadata(table_name)
+            """)
+    
+    def _get_db_connection(self) -> sqlite3.Connection:
+        """Get a database connection with optimal settings"""
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
     
     def get_credentials(self) -> Optional[Credentials]:
         """Get Google credentials"""
@@ -118,45 +146,43 @@ class GoogleSheetsService:
         content_str = json.dumps(values, sort_keys=True)
         return hashlib.md5(content_str.encode()).hexdigest()
     
-    def _get_sheet_changes(self, spreadsheet_id: str, sheet_name: str, values: List[List[str]]) -> Dict[str, Any]:
+    def _get_sheet_changes(self, cursor: sqlite3.Cursor, spreadsheet_id: str, sheet_name: str, values: List[List[str]]) -> Dict[str, Any]:
         """Check if sheet has changed since last sync"""
         current_hash = self._calculate_content_hash(values)
         current_rows = len(values) - 1 if values else 0
         current_cols = len(values[0]) if values else 0
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT content_hash, row_count, column_count, sync_time 
-                FROM _sheet_metadata 
-                WHERE spreadsheet_id = ? AND sheet_name = ?
-            """, (spreadsheet_id, sheet_name))
-            
-            result = cursor.fetchone()
-            
-            if not result:
-                return {
-                    "is_new": True,
-                    "has_changes": True,
-                    "changes": ["New sheet - first sync"]
-                }
-            
-            old_hash, old_rows, old_cols, last_sync = result
-            changes = []
-            
-            if current_hash != old_hash:
-                changes.append("Content modified")
-            if current_rows != old_rows:
-                changes.append(f"Row count changed: {old_rows} → {current_rows}")
-            if current_cols != old_cols:
-                changes.append(f"Column count changed: {old_cols} → {current_cols}")
-            
+        cursor.execute("""
+            SELECT content_hash, row_count, column_count, sync_time 
+            FROM _sheet_metadata 
+            WHERE spreadsheet_id = ? AND sheet_name = ?
+        """, (spreadsheet_id, sheet_name))
+        
+        result = cursor.fetchone()
+        
+        if not result:
             return {
-                "is_new": False,
-                "has_changes": len(changes) > 0,
-                "changes": changes,
-                "last_sync": last_sync
+                "is_new": True,
+                "has_changes": True,
+                "changes": ["New sheet - first sync"]
             }
+        
+        old_hash, old_rows, old_cols, last_sync = result
+        changes = []
+        
+        if current_hash != old_hash:
+            changes.append("Content modified")
+        if current_rows != old_rows:
+            changes.append(f"Row count changed: {old_rows} → {current_rows}")
+        if current_cols != old_cols:
+            changes.append(f"Column count changed: {old_cols} → {current_cols}")
+        
+        return {
+            "is_new": False,
+            "has_changes": len(changes) > 0,
+            "changes": changes,
+            "last_sync": last_sync
+        }
     
     def _check_rate_limit(self) -> bool:
         """Check if we're within rate limits"""
@@ -193,6 +219,18 @@ class GoogleSheetsService:
         now = time.time()
         self.api_calls.append(now)
         self.last_api_call = now
+        
+        # Prevent memory leak: keep only recent API calls (last 2 minutes)
+        self.api_calls = [call_time for call_time in self.api_calls if now - call_time < 120]
+    
+    def cleanup(self):
+        """Clean up service state (call at end of tool execution)"""
+        # Clear rate limiting state to prevent cross-session contamination
+        self.api_calls.clear()
+        self.last_api_call = 0
+        
+        # Clear pending changes state  
+        self.pending_changes.clear()
     
     def _should_debounce(self, spreadsheet_id: str) -> bool:
         """Check if we should wait before syncing due to recent changes"""
@@ -206,92 +244,89 @@ class GoogleSheetsService:
         """Mark that a spreadsheet has pending changes"""
         self.pending_changes[spreadsheet_id] = time.time()
     
-    def _is_cache_stale(self, spreadsheet_id: str, sheet_name: str) -> Dict[str, Any]:
+    def _is_cache_stale(self, cursor: sqlite3.Cursor, spreadsheet_id: str, sheet_name: str) -> Dict[str, Any]:
         """Check if cached data is stale and needs refresh"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            # Get metadata for cache validation
-            cursor.execute("""
-                SELECT sync_time, table_name, row_count 
-                FROM _sheet_metadata 
-                WHERE spreadsheet_id = ? AND sheet_name = ?
-            """, (spreadsheet_id, sheet_name))
-            
-            result = cursor.fetchone()
-            
-            if not result:
-                return {
-                    "is_stale": True,
-                    "reason": "no_metadata",
-                    "action": "full_sync"
-                }
-            
-            sync_time_str, table_name, expected_rows = result
-            
-            # Parse sync time
-            try:
-                sync_time = datetime.fromisoformat(sync_time_str.replace('Z', '+00:00'))
-                age_seconds = (datetime.now() - sync_time.replace(tzinfo=None)).total_seconds()
-            except:
-                return {
-                    "is_stale": True,
-                    "reason": "invalid_sync_time",
-                    "action": "full_sync"
-                }
-            
-            # Check if cache is too old
-            if age_seconds > self.force_refresh_threshold:
-                return {
-                    "is_stale": True,
-                    "reason": "forced_refresh_threshold",
-                    "age_hours": age_seconds / 3600,
-                    "action": "full_sync"
-                }
-            
-            # Check if cache TTL exceeded
-            if age_seconds > self.cache_ttl_seconds:
-                return {
-                    "is_stale": True,
-                    "reason": "cache_ttl_exceeded",
-                    "age_minutes": age_seconds / 60,
-                    "action": "change_check"
-                }
-            
-            # Verify table actually exists and has expected data
-            try:
-                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                actual_rows = cursor.fetchone()[0]
-                
-                if actual_rows != expected_rows:
-                    return {
-                        "is_stale": True,
-                        "reason": "row_count_mismatch",
-                        "expected": expected_rows,
-                        "actual": actual_rows,
-                        "action": "full_sync"
-                    }
-            except sqlite3.OperationalError:
-                return {
-                    "is_stale": True,
-                    "reason": "table_missing",
-                    "action": "full_sync"
-                }
-            
+        # Get metadata for cache validation
+        cursor.execute("""
+            SELECT sync_time, table_name, row_count 
+            FROM _sheet_metadata 
+            WHERE spreadsheet_id = ? AND sheet_name = ?
+        """, (spreadsheet_id, sheet_name))
+        
+        result = cursor.fetchone()
+        
+        if not result:
             return {
-                "is_stale": False,
-                "reason": "cache_valid",
-                "age_minutes": age_seconds / 60,
-                "action": "use_cache"
+                "is_stale": True,
+                "reason": "no_metadata",
+                "action": "full_sync"
             }
+        
+        sync_time_str, table_name, expected_rows = result
+        
+        # Parse sync time
+        try:
+            sync_time = datetime.fromisoformat(sync_time_str.replace('Z', '+00:00'))
+            age_seconds = (datetime.now() - sync_time.replace(tzinfo=None)).total_seconds()
+        except:
+            return {
+                "is_stale": True,
+                "reason": "invalid_sync_time",
+                "action": "full_sync"
+            }
+        
+        # Check if cache is too old
+        if age_seconds > self.force_refresh_threshold:
+            return {
+                "is_stale": True,
+                "reason": "forced_refresh_threshold",
+                "age_hours": age_seconds / 3600,
+                "action": "full_sync"
+            }
+        
+        # Check if cache TTL exceeded
+        if age_seconds > self.cache_ttl_seconds:
+            return {
+                "is_stale": True,
+                "reason": "cache_ttl_exceeded",
+                "age_minutes": age_seconds / 60,
+                "action": "change_check"
+            }
+        
+        # Verify table actually exists and has expected data
+        try:
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            actual_rows = cursor.fetchone()[0]
+            
+            if actual_rows != expected_rows:
+                return {
+                    "is_stale": True,
+                    "reason": "row_count_mismatch",
+                    "expected": expected_rows,
+                    "actual": actual_rows,
+                    "action": "full_sync"
+                }
+        except sqlite3.OperationalError:
+            return {
+                "is_stale": True,
+                "reason": "table_missing",
+                "action": "full_sync"
+            }
+        
+        return {
+            "is_stale": False,
+            "reason": "cache_valid",
+            "age_minutes": age_seconds / 60,
+            "action": "use_cache"
+        }
     
     def _should_force_refresh(self, cache_status: Dict[str, Any]) -> bool:
         """Determine if we should force refresh regardless of change detection"""
         return cache_status["action"] in ["full_sync"]
     
-    def _get_cache_strategy(self, spreadsheet_id: str, sheet_name: str) -> Dict[str, Any]:
+    def _get_cache_strategy(self, cursor: sqlite3.Cursor, spreadsheet_id: str, sheet_name: str) -> Dict[str, Any]:
         """Get comprehensive caching strategy for a sheet"""
-        cache_status = self._is_cache_stale(spreadsheet_id, sheet_name)
+        cache_status = self._is_cache_stale(cursor, spreadsheet_id, sheet_name)
         
         # Check for pending changes
         has_pending_changes = spreadsheet_id in self.pending_changes
@@ -312,8 +347,7 @@ class GoogleSheetsService:
         
         return strategy
 
-# Create service instance
-service = GoogleSheetsService()
+# Service instances will be created per tool call to prevent session state issues
 
 @app.list_tools()
 async def handle_list_tools() -> list[Tool]:
@@ -451,13 +485,37 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle tool calls"""
     
     if name == "smart_sync":
-        url = arguments.get("url", "")
+        # Create fresh service instance for this tool call
+        service = GoogleSheetsService()
+        
+        url = arguments.get("url")
         max_rows = arguments.get("max_rows", MAX_ROWS_PER_SYNC)
         target_sheets = arguments.get("sheets", [])
         
+        # Enhanced input validation
+        if not url or not isinstance(url, str) or not url.strip():
+            return [TextContent(type="text", text=json.dumps({
+                "error": "Google Sheets URL is required",
+                "details": "Please provide a valid Google Sheets URL",
+                "examples": [
+                    "https://docs.google.com/spreadsheets/d/1ABC123.../edit",
+                    "1ABC123DEF456..."
+                ],
+                "tip": "Copy the URL from your browser when viewing the Google Sheet"
+            }))]
+        
+        url = url.strip()  # Clean the URL
         spreadsheet_id = service.extract_spreadsheet_id(url)
         if not spreadsheet_id:
-            return [TextContent(type="text", text=json.dumps({"error": "Invalid URL"}))]
+            return [TextContent(type="text", text=json.dumps({
+                "error": "Invalid Google Sheets URL format",
+                "details": "Could not extract spreadsheet ID from the provided URL",
+                "examples": [
+                    "https://docs.google.com/spreadsheets/d/1ABC123.../edit",
+                    "1ABC123DEF456..."
+                ],
+                "tip": "Make sure to copy the complete URL from your browser"
+            }))]
         
         creds = service.get_credentials()
         if not creds:
@@ -469,6 +527,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             }
             return [TextContent(type="text", text=json.dumps(error_msg, indent=2))]
         
+        conn = None
         try:
             # Check if we should debounce this sync
             if service._should_debounce(spreadsheet_id):
@@ -489,8 +548,8 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             title = spreadsheet['properties']['title']
             sheets = spreadsheet['sheets']
             
-            # Connect to database
-            conn = sqlite3.connect(service.db_path)
+            # Connect to database with optimal settings
+            conn = service._get_db_connection()
             cursor = conn.cursor()
             
             synced_sheets = []
@@ -520,8 +579,11 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                 if not values:
                     continue
                 
+                # Initialize change_info for this sheet iteration
+                change_info = None
+                
                 # Get caching strategy for this sheet
-                cache_strategy = service._get_cache_strategy(spreadsheet_id, sheet_title)
+                cache_strategy = service._get_cache_strategy(cursor, spreadsheet_id, sheet_title)
                 
                 # Handle different cache strategies
                 if cache_strategy["recommended_action"] == "use_cache":
@@ -544,7 +606,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                     continue
                 elif cache_strategy["recommended_action"] == "change_check":
                     # Check for actual changes
-                    change_info = service._get_sheet_changes(spreadsheet_id, sheet_title, values)
+                    change_info = service._get_sheet_changes(cursor, spreadsheet_id, sheet_title, values)
                     
                     if not change_info["has_changes"] and not service._should_force_refresh(cache_strategy["cache_status"]):
                         synced_sheets.append({
@@ -557,6 +619,9 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                         })
                         continue
                 # If we reach here, we need to perform a full sync
+                # Ensure change_info is set for full sync scenarios
+                if change_info is None:
+                    change_info = service._get_sheet_changes(cursor, spreadsheet_id, sheet_title, values)
                 
                 # Create table
                 headers = values[0] if values else []
@@ -610,28 +675,49 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             
         except Exception as e:
             result = {"error": str(e)}
+        finally:
+            # Clean up resources
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+            service.cleanup()
         
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     elif name == "query_sheets":
+        # Create fresh service instance for this tool call
+        service = GoogleSheetsService()
+        
         query = arguments.get("query", "")
         
+        # Security: Block destructive SQL operations
+        if query:
+            dangerous_commands = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE', 'PRAGMA']
+            query_upper = query.strip().upper()
+            
+            if any(cmd in query_upper for cmd in dangerous_commands):
+                return [TextContent(type="text", text=json.dumps({
+                    "error": "Only SELECT queries are allowed for data analysis",
+                    "details": "Destructive operations (DROP, DELETE, etc.) are not permitted",
+                    "tip": "Use SELECT statements to query your synced data safely"
+                }))]
+        
         try:
-            conn = sqlite3.connect(service.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute(query)
-            columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            rows = cursor.fetchall()
-            
-            result = {
-                "columns": columns,
-                "rows": rows[:100],  # Limit results
-                "total_rows": len(rows),
-                "limited": len(rows) > 100
-            }
-            
-            conn.close()
+            with service._get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute(query)
+                columns = [desc[0] for desc in cursor.description] if cursor.description else []
+                rows = cursor.fetchall()
+                
+                result = {
+                    "columns": columns,
+                    "rows": rows[:100],  # Limit results
+                    "total_rows": len(rows),
+                    "limited": len(rows) > 100
+                }
             
         except Exception as e:
             result = {"error": str(e)}
@@ -639,37 +725,38 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     elif name == "list_synced_sheets":
+        # Create fresh service instance for this tool call
+        service = GoogleSheetsService()
+        
         try:
-            conn = sqlite3.connect(service.db_path)
-            cursor = conn.cursor()
-            
-            # Get synced sheets info
-            cursor.execute("""
-                SELECT spreadsheet_title, sheet_name, table_name, row_count, sync_time
-                FROM _sheet_metadata
-                ORDER BY spreadsheet_title, sheet_name
-            """)
-            
-            sheets = cursor.fetchall()
-            
-            # Get all tables
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_%'")
-            tables = [t[0] for t in cursor.fetchall()]
-            
-            result = {
-                "synced_sheets": [
-                    {
-                        "spreadsheet": s[0],
-                        "sheet": s[1],
-                        "table": s[2],
-                        "rows": s[3],
-                        "synced_at": s[4]
-                    } for s in sheets
-                ],
-                "tables": tables
-            }
-            
-            conn.close()
+            with service._get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get synced sheets info
+                cursor.execute("""
+                    SELECT spreadsheet_title, sheet_name, table_name, row_count, sync_time
+                    FROM _sheet_metadata
+                    ORDER BY spreadsheet_title, sheet_name
+                """)
+                
+                sheets = cursor.fetchall()
+                
+                # Get all tables
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_%'")
+                tables = [t[0] for t in cursor.fetchall()]
+                
+                result = {
+                    "synced_sheets": [
+                        {
+                            "spreadsheet": s[0],
+                            "sheet": s[1],
+                            "table": s[2],
+                            "rows": s[3],
+                            "synced_at": s[4]
+                        } for s in sheets
+                    ],
+                    "tables": tables
+                }
             
         except Exception as e:
             result = {"error": str(e)}
@@ -677,60 +764,61 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     elif name == "analyze_sheets":
+        # Create fresh service instance for this tool call
+        service = GoogleSheetsService()
+        
         question = arguments.get("question", "")
         
         try:
-            conn = sqlite3.connect(service.db_path)
-            cursor = conn.cursor()
-            
-            # Get all tables and their columns
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_%'")
-            tables = cursor.fetchall()
-            
-            table_info = {}
-            common_columns = {}
-            
-            for table in tables:
-                table_name = table[0]
-                cursor.execute(f"PRAGMA table_info({table_name})")
-                columns = [(col[1], col[2]) for col in cursor.fetchall()]
-                table_info[table_name] = columns
+            with service._get_db_connection() as conn:
+                cursor = conn.cursor()
                 
-                # Track common columns for JOIN suggestions
-                for col_name, col_type in columns:
-                    if col_name not in ['row_id']:
-                        if col_name not in common_columns:
-                            common_columns[col_name] = []
-                        common_columns[col_name].append(table_name)
-            
-            # Find potential JOIN columns
-            join_candidates = {col: tables for col, tables in common_columns.items() if len(tables) > 1}
-            
-            # Generate suggestions based on question
-            suggestions = []
-            
-            if any(word in question.lower() for word in ['combine', 'join', 'merge', 'together']):
-                for col, tables in join_candidates.items():
-                    if len(tables) == 2:
-                        suggestions.append(f"SELECT * FROM {tables[0]} JOIN {tables[1]} ON {tables[0]}.{col} = {tables[1]}.{col}")
-            
-            if 'all' in question.lower():
-                suggestions.append("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_%'")
+                # Get all tables and their columns
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_%'")
+                tables = cursor.fetchall()
                 
-            if any(word in question.lower() for word in ['count', 'how many']):
-                for table in table_info:
-                    suggestions.append(f"SELECT COUNT(*) as total_rows FROM {table}")
-            
-            result = {
-                "tables": list(table_info.keys()),
-                "table_schemas": {name: [{"column": col[0], "type": col[1]} for col in cols] 
-                                 for name, cols in table_info.items()},
-                "common_columns": join_candidates,
-                "suggested_queries": suggestions,
-                "tip": "Use query_sheets to run any SQL query across your synced data"
-            }
-            
-            conn.close()
+                table_info = {}
+                common_columns = {}
+                
+                for table in tables:
+                    table_name = table[0]
+                    cursor.execute(f"PRAGMA table_info({table_name})")
+                    columns = [(col[1], col[2]) for col in cursor.fetchall()]
+                    table_info[table_name] = columns
+                    
+                    # Track common columns for JOIN suggestions
+                    for col_name, col_type in columns:
+                        if col_name not in ['row_id']:
+                            if col_name not in common_columns:
+                                common_columns[col_name] = []
+                            common_columns[col_name].append(table_name)
+                
+                # Find potential JOIN columns
+                join_candidates = {col: tables for col, tables in common_columns.items() if len(tables) > 1}
+                
+                # Generate suggestions based on question
+                suggestions = []
+                
+                if any(word in question.lower() for word in ['combine', 'join', 'merge', 'together']):
+                    for col, tables in join_candidates.items():
+                        if len(tables) == 2:
+                            suggestions.append(f"SELECT * FROM {tables[0]} JOIN {tables[1]} ON {tables[0]}.{col} = {tables[1]}.{col}")
+                
+                if 'all' in question.lower():
+                    suggestions.append("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '_%'")
+                    
+                if any(word in question.lower() for word in ['count', 'how many']):
+                    for table in table_info:
+                        suggestions.append(f"SELECT COUNT(*) as total_rows FROM {table}")
+                
+                result = {
+                    "tables": list(table_info.keys()),
+                    "table_schemas": {name: [{"column": col[0], "type": col[1]} for col in cols] 
+                                     for name, cols in table_info.items()},
+                    "common_columns": join_candidates,
+                    "suggested_queries": suggestions,
+                    "tip": "Use query_sheets to run any SQL query across your synced data"
+                }
             
         except Exception as e:
             result = {"error": str(e)}
@@ -738,6 +826,9 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     elif name == "get_sheet_preview":
+        # Create fresh service instance for this tool call
+        service = GoogleSheetsService()
+        
         url = arguments.get("url", "")
         sheet_name = arguments.get("sheet_name")
         rows = arguments.get("rows", 10)
@@ -791,6 +882,9 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(preview, indent=2))]
     
     elif name == "check_sheet_changes":
+        # Create fresh service instance for this tool call
+        service = GoogleSheetsService()
+        
         url = arguments.get("url")
         auto_sync = arguments.get("auto_sync", False)
         
@@ -816,7 +910,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                 if not spreadsheet_id:
                     return [TextContent(type="text", text=json.dumps({"error": "Invalid URL"}))]
                 
-                with sqlite3.connect(service.db_path) as conn:
+                with service._get_db_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
                         SELECT spreadsheet_id, spreadsheet_title, sheet_name, table_name 
@@ -826,7 +920,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                     sheets_to_check = cursor.fetchall()
             else:
                 # Check all synced sheets
-                with sqlite3.connect(service.db_path) as conn:
+                with service._get_db_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
                         SELECT DISTINCT spreadsheet_id, spreadsheet_title, sheet_name, table_name
@@ -855,7 +949,10 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                     ).execute()
                     
                     values = result.get('values', [])
-                    change_info = service._get_sheet_changes(spreadsheet_id, sheet_name, values)
+                    # Create temporary connection for change detection (this will be fixed in Phase 1b)
+                    with service._get_db_connection() as temp_conn:
+                        temp_cursor = temp_conn.cursor()
+                        change_info = service._get_sheet_changes(temp_cursor, spreadsheet_id, sheet_name, values)
                     
                     if change_info["has_changes"]:
                         change_entry = {
@@ -874,7 +971,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                                 headers = values[0] if values else []
                                 safe_headers = [re.sub(r'[^a-zA-Z0-9_]', '_', h.lower()) for h in headers]
                                 
-                                with sqlite3.connect(service.db_path) as conn:
+                                with service._get_db_connection() as conn:
                                     cursor = conn.cursor()
                                     
                                     # Drop and recreate table
@@ -927,6 +1024,9 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     
     elif name == "batch_sync_changes":
+        # Create fresh service instance for this tool call
+        service = GoogleSheetsService()
+        
         max_sheets = arguments.get("max_sheets", 10)
         delay_between_sheets = arguments.get("delay_between_sheets", 1.0)
         
@@ -942,7 +1042,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         
         try:
             # Get all sheets that need syncing
-            with sqlite3.connect(service.db_path) as conn:
+            with service._get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT DISTINCT spreadsheet_id, spreadsheet_title, sheet_name, table_name
@@ -995,7 +1095,10 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                         continue
                     
                     # Check for changes
-                    change_info = service._get_sheet_changes(spreadsheet_id, sheet_name, values)
+                    # Create temporary connection for change detection (this will be fixed in Phase 1b)  
+                    with service._get_db_connection() as temp_conn:
+                        temp_cursor = temp_conn.cursor()
+                        change_info = service._get_sheet_changes(temp_cursor, spreadsheet_id, sheet_name, values)
                     
                     if not change_info["has_changes"]:
                         skipped_sheets.append({
@@ -1009,7 +1112,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                     headers = values[0] if values else []
                     safe_headers = [re.sub(r'[^a-zA-Z0-9_]', '_', h.lower()) for h in headers]
                     
-                    with sqlite3.connect(service.db_path) as conn:
+                    with service._get_db_connection() as conn:
                         cursor = conn.cursor()
                         
                         # Drop and recreate table
@@ -1071,7 +1174,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
 
 async def main():
-    """Main entry point"""
+    """Main entry point with proper cleanup"""
     try:
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
             await app.run(
@@ -1086,9 +1189,15 @@ async def main():
                     ),
                 ),
             )
+    except KeyboardInterrupt:
+        print("Server shutting down gracefully...", file=sys.stderr)
     except Exception as e:
         print(f"Server error: {e}", file=sys.stderr)
         raise
+    finally:
+        # Clean up any remaining database connections
+        # With our new architecture, this is mostly handled by per-tool cleanup
+        pass
 
 if __name__ == "__main__":
     asyncio.run(main())
