@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "google-sheet-analytics-mcp"
+version = "1.0.0"
+description = "A clean, practical MCP (Model Context Protocol) server for analyzing Google Sheets data with multi-tab support. Built for Claude Code and other MCP-compatible AI assistants by TNTM."
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "TNTM", email = "noreply@tntm.com"}
+]
+keywords = ["mcp", "google-sheets", "analytics", "claude", "ai-assistant"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Office/Business :: Financial :: Spreadsheet",
+]
+
+dependencies = [
+    # Core MCP and validation
+    "mcp>=1.0.0",
+    "pydantic>=2.0.0",
+    
+    # Google Sheets API integration
+    "google-api-python-client>=2.0.0",
+    "google-auth-httplib2>=0.1.0", 
+    "google-auth-oauthlib>=1.0.0",
+    
+    # Performance optimization dependencies
+    "numpy>=1.21.0",
+    "scikit-learn>=1.0.0",
+    "sqlparse>=0.4.0",
+    "joblib>=1.0.0",
+    
+    # Enhanced features
+    "python-dotenv>=0.19.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/google-sheet-analytics-mcp"
+Documentation = "https://github.com/yourusername/google-sheet-analytics-mcp#readme"
+Repository = "https://github.com/yourusername/google-sheet-analytics-mcp.git"
+Issues = "https://github.com/yourusername/google-sheet-analytics-mcp/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "mypy>=1.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

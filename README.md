@@ -2,7 +2,7 @@
 
 ![TNTM Logo](assets/tntm-logo.png)
 
-A clean, practical MCP (Model Context Protocol) server for analyzing Google Sheets data with multi-tab support. Built for Claude Desktop and other MCP-compatible AI assistants by TNTM.
+A clean, practical MCP (Model Context Protocol) server for analyzing Google Sheets data with multi-tab support. Built for Claude Code and other MCP-compatible AI assistants by TNTM.
 
 ## 🚀 Features
 
@@ -16,52 +16,38 @@ A clean, practical MCP (Model Context Protocol) server for analyzing Google Shee
 ## 📋 Prerequisites
 
 - Python 3.8+
-- Claude Desktop or another MCP-compatible client
+- Claude Code or another MCP-compatible client
 - Google Cloud Project with Sheets API enabled
 - OAuth2 credentials from Google Cloud Console
 
 ## 🛠️ Setup
 
-### 1. Clone and Install
+### Quick Start with Claude Code
+1. **Drag this project folder into Claude Code**
+2. **Ask Claude Code**: *"Follow the README instructions to install this MCP server into Claude Code"*
+3. **Get Google OAuth credentials** (Claude Code will guide you through this):
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select existing one
+   - Enable the Google Sheets API
+   - Create OAuth2 credentials (Desktop Application)
+   - Download and save as `credentials.json` in the project root
+
+That's it! Claude Code will handle the rest automatically.
+
+### Manual Installation
+If you prefer to install manually:
+
 ```bash
+# 1. Clone the repository
 git clone https://github.com/yourusername/google-sheet-analytics-mcp.git
 cd google-sheet-analytics-mcp
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
+
+# 2. Install into Claude Code (handles dependencies automatically)
+mcp install src/mcp_server.py --name google-sheets-analytics --with-editable .
 ```
 
-### 2. Google Cloud Setup
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing one
-3. Enable the Google Sheets API
-4. Create OAuth2 credentials (Desktop Application)
-5. Download the credentials and save as `credentials.json` in the project root
-
-### 3. Run Automated Setup
-```bash
-python3 setup.py
-```
-
-This will:
-- Set up OAuth authentication
-- Configure Claude Desktop automatically
-- Test the connection
-
-Or configure MCP client manually:
-```json
-{
-  "mcpServers": {
-    "google-sheets-analytics": {
-      "command": "/path/to/your/venv/bin/python",
-      "args": ["/path/to/google-sheet-analytics-mcp/src/mcp_server.py"]
-    }
-  }
-}
-```
-
-### 4. First Run
-Restart your MCP client (e.g., Claude Desktop) and the OAuth flow will start automatically on first tool use.
+### First Run
+The MCP server is now available in Claude Code! The OAuth flow will start automatically on first tool use.
 
 ## 🔧 Tools
 
@@ -122,17 +108,15 @@ google-sheet-analytics-mcp/
 ├── src/
 │   ├── mcp_server.py          # Main MCP server implementation
 │   └── auth/
-│       └── oauth_setup.py     # Unified OAuth authentication module
-├── setup.py                   # Unified setup script (handles everything)
-├── requirements.txt           # Python dependencies
+│       └── oauth_setup.py     # OAuth authentication module
+├── pyproject.toml             # Modern Python package configuration
 ├── credentials.json.example   # Example OAuth credentials format
 ├── README.md                  # This file
 ├── LICENSE                    # MIT License
 ├── CLAUDE.md                  # Claude-specific instructions
-├── data/                      # Runtime data (created automatically)
-│   ├── token.json            # OAuth token (created during setup)
-│   └── sheets_data.sqlite    # Local database (created on first sync)
-└── venv/                      # Virtual environment (created during setup)
+└── data/                      # Runtime data (created automatically)
+    ├── token.json            # OAuth token (created during setup)
+    └── sheets_data.sqlite    # Local database (created on first sync)
 ```
 
 ## ⚡ Performance
@@ -213,11 +197,10 @@ ORDER BY total_revenue DESC
 - **Manual setup**: `venv/bin/python src/auth/oauth_setup.py --manual`
 
 ### MCP Server Not Appearing
-1. Ensure Claude Desktop is fully closed
-2. Verify config: `cat ~/Library/Application\ Support/Claude/claude_desktop_config.json`
-3. Check the config includes the google-sheets-analytics server
-4. Restart Claude Desktop
-5. Check developer console for errors
+1. Verify config: `cat ~/.config/claude-code/config.json`
+2. Check the config includes the google-sheets-analytics server
+3. Ensure the virtual environment and dependencies are properly installed
+4. Check that the Python path in the config is correct
 
 ### Database Issues
 - Database location: `data/sheets_data.sqlite`
@@ -239,7 +222,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - Built for the [Model Context Protocol](https://modelcontextprotocol.io/)
-- Designed for [Claude Desktop](https://claude.ai/download)
+- Designed for [Claude Code](https://claude.ai/code)
 - Uses [Google Sheets API](https://developers.google.com/sheets/api)
 
 ---
