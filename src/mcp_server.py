@@ -9,6 +9,8 @@ import sqlite3
 import re
 import hashlib
 import time
+import logging
+import gc
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -31,6 +33,10 @@ from google.oauth2.credentials import Credentials
 # Constants
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 MAX_ROWS_PER_SYNC = 1000  # Default limit
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Create server with TNTM branding
 app = Server(
@@ -59,14 +65,15 @@ class GoogleSheetsService:
         self.force_refresh_threshold = 86400  # Force refresh after 24 hours
     
     def _init_database(self):
-        """Initialize SQLite database with metadata table and optimal settings"""
+        """Initialize SQLite database with metadata table and optimal settings for large datasets"""
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-            # Configure SQLite for better concurrency and performance
+            # Configure SQLite for better concurrency and performance with 1M+ rows
             conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging for better concurrency
             conn.execute("PRAGMA synchronous=NORMAL")  # Balance between safety and performance  
-            conn.execute("PRAGMA cache_size=10000")  # Increase cache size
+            conn.execute("PRAGMA cache_size=100000")  # Increased cache for large datasets (100K pages)
             conn.execute("PRAGMA temp_store=memory")  # Store temp tables in memory
-            conn.execute("PRAGMA mmap_size=268435456")  # 256MB memory map
+            conn.execute("PRAGMA mmap_size=1073741824")  # 1GB memory map for large datasets
+            conn.execute("PRAGMA busy_timeout=10000")  # 10 second timeout for better concurrency
             
             # Metadata table to track synced sheets
             conn.execute("""
@@ -99,10 +106,14 @@ class GoogleSheetsService:
             """)
     
     def _get_db_connection(self) -> sqlite3.Connection:
-        """Get a database connection with optimal settings"""
+        """Get a database connection with optimal settings for large datasets"""
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=100000")
+        conn.execute("PRAGMA temp_store=memory")
+        conn.execute("PRAGMA mmap_size=1073741824")
+        conn.execute("PRAGMA busy_timeout=10000")
         return conn
     
     def get_credentials(self) -> Optional[Credentials]:
@@ -145,6 +156,82 @@ class GoogleSheetsService:
         """Calculate hash of sheet content for change detection"""
         content_str = json.dumps(values, sort_keys=True)
         return hashlib.md5(content_str.encode()).hexdigest()
+    
+    def _calculate_content_hash_streaming(self, chunks) -> str:
+        """Calculate hash progressively for large datasets"""
+        hasher = hashlib.md5()
+        row_count = 0
+        
+        for chunk in chunks:
+            # For very large datasets, sample every 10th row after first 1000
+            for i, row in enumerate(chunk):
+                if row_count < 1000 or row_count % 10 == 0:
+                    hasher.update(json.dumps(row, sort_keys=True).encode())
+                row_count += 1
+        
+        return hasher.hexdigest()
+    
+    async def _fetch_sheet_chunked(self, sheets_service, spreadsheet_id: str, sheet_name: str, 
+                                  total_rows: int, chunk_size: int = 50000):
+        """Fetch sheet data in chunks for large datasets"""
+        chunks_fetched = 0
+        row_offset = 0
+        
+        # Determine actual data range (columns)
+        await self._wait_for_rate_limit()
+        self._record_api_call()
+        
+        # Get first row to determine column range
+        sample_range = f"'{sheet_name}'!1:1"
+        result = sheets_service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=sample_range
+        ).execute()
+        
+        first_row = result.get('values', [[]])[0] if result.get('values') else []
+        if not first_row:
+            return
+        
+        # Calculate actual column range (A to last column with data)
+        last_col = self._number_to_column(len(first_row))
+        
+        while row_offset < total_rows:
+            # Calculate chunk range
+            start_row = row_offset + 1
+            end_row = min(row_offset + chunk_size, total_rows)
+            range_name = f"'{sheet_name}'!A{start_row}:{last_col}{end_row}"
+            
+            # Fetch chunk with rate limiting
+            await self._wait_for_rate_limit()
+            self._record_api_call()
+            
+            chunk_result = sheets_service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=range_name
+            ).execute()
+            
+            chunk_data = chunk_result.get('values', [])
+            if chunk_data:
+                # Include headers in first chunk
+                if chunks_fetched == 0 and row_offset > 0:
+                    chunk_data = [first_row] + chunk_data
+                yield chunk_data
+            
+            chunks_fetched += 1
+            row_offset = end_row
+            
+            # Progress callback placeholder
+            progress = (row_offset / total_rows) * 100
+            logger.info(f"Fetched {row_offset}/{total_rows} rows ({progress:.1f}%)")
+    
+    def _number_to_column(self, n: int) -> str:
+        """Convert column number to letter (1=A, 26=Z, 27=AA, etc.)"""
+        result = ""
+        while n > 0:
+            n -= 1
+            result = chr(n % 26 + ord('A')) + result
+            n //= 26
+        return result
     
     def _get_sheet_changes(self, cursor: sqlite3.Cursor, spreadsheet_id: str, sheet_name: str, values: List[List[str]]) -> Dict[str, Any]:
         """Check if sheet has changed since last sync"""
@@ -566,16 +653,52 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                 safe_name = re.sub(r'[^a-zA-Z0-9_]', '_', sheet_title.lower())
                 safe_name = f"sheet_{safe_name}" if safe_name[0].isdigit() else safe_name
                 
-                # Get data with row limit (with rate limiting)
-                await service._wait_for_rate_limit()
-                range_name = f"'{sheet_title}'!A1:Z{max_rows}"
-                service._record_api_call()
-                result = sheets_service.spreadsheets().values().get(
-                    spreadsheetId=spreadsheet_id,
-                    range=range_name
-                ).execute()
+                # Get sheet dimensions to determine if chunking is needed
+                sheet_properties = sheet['properties']
+                grid_properties = sheet_properties.get('gridProperties', {})
+                sheet_rows = grid_properties.get('rowCount', 0)
+                sheet_cols = grid_properties.get('columnCount', 0)
                 
-                values = result.get('values', [])
+                # Determine actual data rows (may be less than sheet dimensions)
+                actual_rows = min(sheet_rows, max_rows)
+                
+                # Decide whether to use chunked fetching
+                use_chunking = actual_rows > 10000
+                chunk_size = 50000 if actual_rows > 100000 else 10000
+                
+                values = []
+                headers = None
+                
+                if use_chunking and actual_rows > 0:
+                    # Use chunked fetching for large sheets
+                    logger.info(f"Using chunked fetching for {sheet_title}: {actual_rows} rows")
+                    
+                    async for chunk in service._fetch_sheet_chunked(
+                        sheets_service, spreadsheet_id, sheet_title, actual_rows, chunk_size
+                    ):
+                        if not headers:
+                            headers = chunk[0] if chunk else []
+                            values = chunk
+                        else:
+                            # Append data rows (skip header in subsequent chunks)
+                            values.extend(chunk[1:] if len(chunk) > 1 else [])
+                        
+                        # Break if we've reached max_rows
+                        if len(values) >= max_rows:
+                            values = values[:max_rows]
+                            break
+                else:
+                    # Use traditional single fetch for smaller sheets
+                    await service._wait_for_rate_limit()
+                    range_name = f"'{sheet_title}'!A1:Z{max_rows}"
+                    service._record_api_call()
+                    result = sheets_service.spreadsheets().values().get(
+                        spreadsheetId=spreadsheet_id,
+                        range=range_name
+                    ).execute()
+                    
+                    values = result.get('values', [])
+                
                 if not values:
                     continue
                 
@@ -630,20 +753,55 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                 # Drop existing table
                 cursor.execute(f"DROP TABLE IF EXISTS {safe_name}")
                 
-                # Create new table with row ID
+                # Create new table with row ID and optimized column types
                 columns = 'row_id INTEGER PRIMARY KEY, ' + ', '.join([f"{h} TEXT" for h in safe_headers])
                 cursor.execute(f"CREATE TABLE {safe_name} ({columns})")
                 
-                # Insert data
-                for idx, row in enumerate(values[1:], 1):
-                    # Pad row to match headers
-                    padded_row = row + [''] * (len(headers) - len(row))
-                    placeholders = ', '.join(['?' for _ in range(len(headers) + 1)])
-                    cursor.execute(f"INSERT INTO {safe_name} VALUES ({placeholders})", [idx] + padded_row)
+                # Prepare data for bulk insert
+                data_rows = values[1:] if len(values) > 1 else []
+                row_count = len(data_rows)
                 
-                row_count = len(values) - 1
+                if row_count > 0:
+                    # Use bulk insert with executemany for performance
+                    bulk_data = []
+                    for idx, row in enumerate(data_rows, 1):
+                        # Pad row to match headers
+                        padded_row = row + [''] * (len(headers) - len(row))
+                        bulk_data.append([idx] + padded_row)
+                    
+                    # Insert in batches for optimal performance
+                    batch_size = 10000
+                    placeholders = ', '.join(['?' for _ in range(len(headers) + 1)])
+                    
+                    for i in range(0, len(bulk_data), batch_size):
+                        batch = bulk_data[i:i + batch_size]
+                        cursor.executemany(f"INSERT INTO {safe_name} VALUES ({placeholders})", batch)
+                        
+                        # Log progress for large datasets
+                        if row_count > 10000:
+                            progress = min(i + batch_size, row_count)
+                            logger.info(f"Inserted {progress}/{row_count} rows into {safe_name}")
+                
                 total_rows += row_count
-                content_hash = service._calculate_content_hash(values)
+                
+                # Calculate content hash efficiently
+                if use_chunking and row_count > 100000:
+                    # Use sampling for very large datasets
+                    sample_size = min(10000, row_count)
+                    sample_indices = range(0, row_count, row_count // sample_size)
+                    sample_values = [values[0]] + [values[i+1] for i in sample_indices if i+1 < len(values)]
+                    content_hash = service._calculate_content_hash(sample_values)
+                else:
+                    content_hash = service._calculate_content_hash(values)
+                
+                # Add indexes after bulk insert for better performance
+                if row_count > 10000:
+                    # Create indexes on commonly queried columns (first few columns often used)
+                    for i, header in enumerate(safe_headers[:3]):
+                        try:
+                            cursor.execute(f"CREATE INDEX idx_{safe_name}_{header} ON {safe_name}({header})")
+                        except:
+                            pass  # Index creation might fail for some columns
                 
                 # Update metadata
                 cursor.execute("""
@@ -660,6 +818,14 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                     "status": "synced",
                     "changes": change_info["changes"]
                 })
+                
+                # Memory cleanup for large datasets
+                if row_count > 50000:
+                    del values
+                    if 'bulk_data' in locals():
+                        del bulk_data
+                    gc.collect()
+                    logger.info(f"Memory cleanup performed after syncing {sheet_title}")
             
             conn.commit()
             conn.close()
@@ -708,16 +874,43 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
             with service._get_db_connection() as conn:
                 cursor = conn.cursor()
                 
+                # Add automatic LIMIT if not present for safety
+                query_lower = query.strip().lower()
+                if 'limit' not in query_lower:
+                    # Add a reasonable default limit
+                    query = f"{query} LIMIT 10000"
+                
                 cursor.execute(query)
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
-                rows = cursor.fetchall()
+                
+                # Stream results instead of fetchall for large datasets
+                result_rows = []
+                total_fetched = 0
+                max_display_rows = 1000  # Maximum rows to return to client
+                
+                while True:
+                    # Fetch in batches
+                    batch = cursor.fetchmany(1000)
+                    if not batch:
+                        break
+                    
+                    total_fetched += len(batch)
+                    
+                    # Only keep rows up to display limit
+                    if len(result_rows) < max_display_rows:
+                        remaining = max_display_rows - len(result_rows)
+                        result_rows.extend(batch[:remaining])
                 
                 result = {
                     "columns": columns,
-                    "rows": rows[:100],  # Limit results
-                    "total_rows": len(rows),
-                    "limited": len(rows) > 100
+                    "rows": result_rows,
+                    "total_rows": total_fetched,
+                    "limited": total_fetched > max_display_rows,
+                    "display_limit": max_display_rows
                 }
+                
+                if total_fetched > max_display_rows:
+                    result["note"] = f"Showing first {max_display_rows} of {total_fetched} rows. Add LIMIT to your query to control results."
             
         except Exception as e:
             result = {"error": str(e)}
@@ -941,18 +1134,62 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                 spreadsheet_id, spreadsheet_title, sheet_name, table_name = sheet_info
                 
                 try:
-                    # Get current data from Google Sheets
-                    range_name = f"'{sheet_name}'!A1:Z1000"  # Check first 1000 rows
-                    result = sheets_service.spreadsheets().values().get(
+                    # First check sheet metadata for quick change detection
+                    sheet_meta = sheets_service.spreadsheets().get(
                         spreadsheetId=spreadsheet_id,
-                        range=range_name
+                        ranges=[f"'{sheet_name}'"],
+                        fields="sheets(properties)"
                     ).execute()
                     
-                    values = result.get('values', [])
-                    # Create temporary connection for change detection (this will be fixed in Phase 1b)
+                    # Get sheet dimensions for efficient checking
+                    sheet_props = sheet_meta['sheets'][0]['properties']
+                    grid_props = sheet_props.get('gridProperties', {})
+                    current_rows = grid_props.get('rowCount', 0)
+                    
+                    # For large sheets, use sampling instead of fetching all data
+                    if current_rows > 10000:
+                        # Sample approach: check first 100, last 100, and some random rows
+                        sample_ranges = [
+                            f"'{sheet_name}'!A1:Z100",  # First 100 rows
+                            f"'{sheet_name}'!A{max(1, current_rows-100)}:Z{current_rows}"  # Last 100 rows
+                        ]
+                        
+                        batch_result = sheets_service.spreadsheets().values().batchGet(
+                            spreadsheetId=spreadsheet_id,
+                            ranges=sample_ranges
+                        ).execute()
+                        
+                        # Combine samples for hash calculation
+                        values = []
+                        for range_data in batch_result.get('valueRanges', []):
+                            values.extend(range_data.get('values', []))
+                    else:
+                        # For smaller sheets, get all data
+                        range_name = f"'{sheet_name}'!A1:Z{min(current_rows, 5000)}"
+                        result = sheets_service.spreadsheets().values().get(
+                            spreadsheetId=spreadsheet_id,
+                            range=range_name
+                        ).execute()
+                        values = result.get('values', [])
+                    
+                    # Check for changes
                     with service._get_db_connection() as temp_conn:
                         temp_cursor = temp_conn.cursor()
-                        change_info = service._get_sheet_changes(temp_cursor, spreadsheet_id, sheet_name, values)
+                        
+                        # Quick check: compare row counts first
+                        temp_cursor.execute("""
+                            SELECT row_count FROM _sheet_metadata 
+                            WHERE spreadsheet_id = ? AND sheet_name = ?
+                        """, (spreadsheet_id, sheet_name))
+                        
+                        stored_row_count = temp_cursor.fetchone()
+                        if stored_row_count and stored_row_count[0] != current_rows:
+                            change_info = {
+                                "has_changes": True,
+                                "changes": [f"Row count changed: {stored_row_count[0]} → {current_rows}"]
+                            }
+                        else:
+                            change_info = service._get_sheet_changes(temp_cursor, spreadsheet_id, sheet_name, values)
                     
                     if change_info["has_changes"]:
                         change_entry = {
@@ -1082,8 +1319,25 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
                     # Wait for rate limit
                     await service._wait_for_rate_limit()
                     
-                    # Get current sheet data
-                    range_name = f"'{sheet_name}'!A1:Z1000"
+                    # Get sheet dimensions first
+                    service._record_api_call()
+                    sheet_meta = sheets_service.spreadsheets().get(
+                        spreadsheetId=spreadsheet_id,
+                        ranges=[f"'{sheet_name}'"],
+                        fields="sheets(properties)"
+                    ).execute()
+                    
+                    # Get actual dimensions
+                    sheet_props = sheet_meta['sheets'][0]['properties']
+                    grid_props = sheet_props.get('gridProperties', {})
+                    total_rows = grid_props.get('rowCount', 0)
+                    total_cols = grid_props.get('columnCount', 0)
+                    
+                    # Determine column range dynamically
+                    last_col = service._number_to_column(min(total_cols, 26))  # Limit to Z for compatibility
+                    
+                    # Get current sheet data with dynamic range
+                    range_name = f"'{sheet_name}'!A1:{last_col}{min(total_rows, 10000)}"
                     service._record_api_call()
                     result = sheets_service.spreadsheets().values().get(
                         spreadsheetId=spreadsheet_id,
