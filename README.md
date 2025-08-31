@@ -22,7 +22,7 @@ A clean, practical MCP (Model Context Protocol) server for analyzing Google Shee
 
 ## 🛠️ Setup
 
-### Quick Start with Claude Code
+### ⚡ One-Click Setup with Claude Code (Recommended)
 1. **Drag this project folder into Claude Code**
 2. **Ask Claude Code**: *"Follow the README instructions to install this MCP server into Claude Code"*
 3. **Get Google OAuth credentials** (Claude Code will guide you through this):
@@ -32,22 +32,62 @@ A clean, practical MCP (Model Context Protocol) server for analyzing Google Shee
    - Create OAuth2 credentials (Desktop Application)
    - Download and save as `credentials.json` in the project root
 
-That's it! Claude Code will handle the rest automatically.
+That's it! Claude Code will handle virtual environments, dependencies, and OAuth setup automatically.
 
-### Manual Installation
-If you prefer to install manually:
+### 🚀 Automated Installation (Alternative)
+For non-Claude Code users or manual setup:
 
+#### Option 1: Shell Script (macOS/Linux)
 ```bash
-# 1. Clone the repository
+# Download and run the automated installer
+curl -sSL https://raw.githubusercontent.com/yourusername/google-sheet-analytics-mcp/main/install.sh | bash
+
+# Or clone first, then run
+git clone https://github.com/yourusername/google-sheet-analytics-mcp.git
+cd google-sheet-analytics-mcp
+./install.sh
+```
+
+#### Option 2: Python Script (All platforms)
+```bash
+# Clone the repository
 git clone https://github.com/yourusername/google-sheet-analytics-mcp.git
 cd google-sheet-analytics-mcp
 
-# 2. Install into Claude Code (handles dependencies automatically)
-mcp install src/mcp_server.py --name google-sheets-analytics --with-editable .
+# Run the Python installer
+python3 setup.py
 ```
 
+#### Option 3: Manual Step-by-step
+```bash
+# 1. Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# 2. Install dependencies
+pip install -e .
+
+# 3. Install MCP server
+mcp install src/mcp_server.py --name google-sheets-analytics --with-editable .
+
+# 4. Setup OAuth (after adding credentials.json)
+python src/auth/oauth_setup.py
+```
+
+### 🔐 Getting Google Credentials
+Before first use, you need OAuth2 credentials:
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select existing one
+3. Enable the **Google Sheets API**
+4. Go to **APIs & Services > Credentials**
+5. Click **Create Credentials > OAuth 2.0 Client IDs**
+6. Choose **Desktop Application**
+7. Download the JSON file
+8. Save it as `credentials.json` in the project root
+
 ### First Run
-The MCP server is now available in Claude Code! The OAuth flow will start automatically on first tool use.
+The OAuth flow will start automatically on first tool use, opening your browser for authentication.
 
 ## 🔧 Tools
 
@@ -179,7 +219,16 @@ ORDER BY total_revenue DESC
 
 ## 🐛 Troubleshooting
 
-### Common Issues
+### Installation Issues
+
+| Issue | Solution |
+|-------|----------|
+| "Failed to reconnect to google-sheets-analytics" | Run automated setup: `python3 setup.py` or `./install.sh` |
+| "ModuleNotFoundError: No module named 'google'" | Dependencies not installed - use automated installer or manual venv setup |
+| "externally-managed-environment" | Use virtual environment (automated installers handle this) |
+| "MCP server not appearing" | Check Claude Code config and restart app |
+
+### Common Runtime Issues
 
 | Issue | Solution |
 |-------|----------|

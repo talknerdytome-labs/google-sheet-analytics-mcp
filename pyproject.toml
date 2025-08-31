@@ -63,6 +63,18 @@ dev = [
     "mypy>=1.0.0",
 ]
 
+[project.scripts]
+google-sheets-mcp-setup = "auth.oauth_setup:main"
+google-sheets-mcp-server = "mcp_server:main"
+
+# MCP-specific configuration
+[tool.mcp]
+server_name = "google-sheets-analytics"
+description = "Google Sheets Analytics MCP Server"
+entry_point = "src/mcp_server.py"
+install_dependencies = true
+auto_setup = true
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
