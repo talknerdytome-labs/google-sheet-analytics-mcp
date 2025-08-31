@@ -32,7 +32,7 @@ from google.oauth2.credentials import Credentials
 
 # Constants
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-MAX_ROWS_PER_SYNC = 1000  # Default limit
+MAX_ROWS_PER_SYNC = 100000  # Default limit - balances completeness with performance
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -452,8 +452,8 @@ async def handle_list_tools() -> list[Tool]:
                     },
                     "max_rows": {
                         "type": "integer",
-                        "description": "Maximum rows to sync per sheet (default: 1000)",
-                        "default": 1000
+                        "description": "Maximum rows to sync per sheet (default: 100000)",
+                        "default": 100000
                     },
                     "sheets": {
                         "type": "array",

@@ -86,8 +86,19 @@ Before first use, you need OAuth2 credentials:
 7. Download the JSON file
 8. Save it as `credentials.json` in the project root
 
-### First Run
-The OAuth flow will start automatically on first tool use, opening your browser for authentication.
+### 🚀 First Run - OAuth Setup
+After adding your `credentials.json` file, run the OAuth setup:
+
+```bash
+python src/auth/oauth_setup.py
+```
+
+This will:
+1. Open your browser for Google authentication
+2. Create a `token.json` file with your access credentials
+3. Verify the connection works
+
+**You only need to do this once!** After setup, all MCP tools will work automatically.
 
 ## 🔧 Tools
 
@@ -97,7 +108,7 @@ Sync Google Sheet data with intelligent chunking for large datasets.
 Use smart_sync with url "https://docs.google.com/spreadsheets/d/your_sheet_id" and max_rows 100000
 ```
 - `url` (required): Google Sheets URL
-- `max_rows` (optional): Max rows per sheet (default: 1000, supports up to 1M+)
+- `max_rows` (optional): Max rows per sheet (default: 100000, supports up to 1M+)
 - `sheets` (optional): Array of specific sheet names to sync
 
 **Auto-scaling behavior:**
